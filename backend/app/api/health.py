@@ -48,11 +48,8 @@ async def ready(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         checks["postgres"] = f"error: {e}"
 
-    # 2. Ollama – just check the container state, don't require it to be running.
-    # Ollama starts on demand, so "stopped" is a valid idle state, not a failure.
-    from app.services.ollama_manager import get_ollama_status
-    ollama_info = await get_ollama_status()
-    checks["ollama"] = "running" if ollama_info["running"] else "idle (starts on first query)"
+    # 2. LLM — Groq API is always available, no container to check
+    checks["llm"] = "ok (groq api)"
 
     # 3. Embedding model
     checks["embedder"] = "ok" if _model is not None else "not loaded"
