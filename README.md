@@ -211,6 +211,8 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d your-domain.com
 ```
 
+If you serve the frontend from `https://` (for example S3 + CloudFront), do not point the browser directly at `http://<EC2-IP>:8000`. Modern browsers will block that as mixed content or fail the network request. Route `/api` and `/health` through the same HTTPS domain, or put the backend behind its own HTTPS endpoint.
+
 ### Estimated AWS cost
 
 | Resource | Cost |

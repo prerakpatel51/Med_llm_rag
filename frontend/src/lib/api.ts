@@ -2,10 +2,11 @@
 
 import type { QueryResponse, MemoryEntry } from "./types";
 
-// Backend URL — uses env var in production (S3/CloudFront), falls back to same-host for local dev
-const BACKEND_DIRECT = typeof window !== "undefined"
-  ? (process.env.NEXT_PUBLIC_BACKEND_URL || `${window.location.protocol}//${window.location.hostname}:8000`)
-  : "http://backend:8000";
+// In the browser, prefer same-origin paths so a reverse proxy/CDN can front both
+// the static app and the backend API without mixed-content issues.
+const BACKEND_BASE = typeof window === "undefined"
+  ? (process.env.BACKEND_URL || "http://backend:8000")
+  : (process.env.NEXT_PUBLIC_BACKEND_URL || "");
 
 export async function submitQuery(
   query: string,
@@ -15,7 +16,7 @@ export async function submitQuery(
   const body: Record<string, string> = { query, session_id: sessionId };
   if (model) body.model = model;
 
-  const res = await fetch(`${BACKEND_DIRECT}/api/v1/query`, {
+  const res = await fetch(`${BACKEND_BASE}/api/v1/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -37,14 +38,14 @@ export async function fetchMemory(
   limit: number = 50
 ): Promise<MemoryEntry[]> {
   const res = await fetch(
-    `${BACKEND_DIRECT}/api/v1/memory?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`
+    `${BACKEND_BASE}/api/v1/memory?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
 export async function checkHealth(): Promise<{ status: string }> {
-  const res = await fetch(`${BACKEND_DIRECT}/health`);
+  const res = await fetch(`${BACKEND_BASE}/health`);
   if (!res.ok) return { status: "error" };
   return res.json();
 }

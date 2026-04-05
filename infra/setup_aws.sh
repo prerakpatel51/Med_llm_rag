@@ -58,61 +58,9 @@ aws s3api put-public-access-block \
 
 echo "  S3 Bucket: $BUCKET_NAME"
 
-# ── 3. CloudFront Distribution ────────────────────────────────────────────────
+# ── 3. Security Group for EC2 ─────────────────────────────────────────────────
 echo ""
-echo "[3/6] Creating CloudFront distribution..."
-
-CF_CONFIG=$(cat <<EOF
-{
-  "Origins": {
-    "Quantity": 1,
-    "Items": [{
-      "Id": "S3-$BUCKET_NAME",
-      "DomainName": "$BUCKET_NAME.s3-website-$REGION.amazonaws.com",
-      "CustomOriginConfig": {
-        "HTTPPort": 80,
-        "HTTPSPort": 443,
-        "OriginProtocolPolicy": "http-only"
-      }
-    }]
-  },
-  "DefaultCacheBehavior": {
-    "TargetOriginId": "S3-$BUCKET_NAME",
-    "ViewerProtocolPolicy": "redirect-to-https",
-    "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
-    "Compress": true
-  },
-  "DefaultRootObject": "index.html",
-  "CustomErrorResponses": {
-    "Quantity": 1,
-    "Items": [{
-      "ErrorCode": 404,
-      "ResponseCode": "200",
-      "ResponsePagePath": "/index.html"
-    }]
-  },
-  "Comment": "$APP_NAME frontend",
-  "Enabled": true,
-  "PriceClass": "PriceClass_100"
-}
-EOF
-)
-
-CF_RESULT=$(aws cloudfront create-distribution \
-  --distribution-config "$CF_CONFIG" \
-  --query 'Distribution.{ID:Id,Domain:DomainName}' \
-  --output json 2>/dev/null) || echo "  CloudFront may already exist"
-
-if [ ! -z "$CF_RESULT" ]; then
-  CF_ID=$(echo $CF_RESULT | jq -r '.ID')
-  CF_DOMAIN=$(echo $CF_RESULT | jq -r '.Domain')
-  echo "  CloudFront ID: $CF_ID"
-  echo "  CloudFront URL: https://$CF_DOMAIN"
-fi
-
-# ── 4. Security Group for EC2 ─────────────────────────────────────────────────
-echo ""
-echo "[4/6] Creating security group for EC2..."
+echo "[3/6] Creating security group for EC2..."
 VPC_ID=$(aws ec2 describe-vpcs \
   --region $REGION \
   --filters "Name=isDefault,Values=true" \
@@ -141,9 +89,9 @@ done
 
 echo "  Security Group: $SG_ID"
 
-# ── 5. EC2 Key Pair ───────────────────────────────────────────────────────────
+# ── 4. EC2 Key Pair ───────────────────────────────────────────────────────────
 echo ""
-echo "[5/6] Creating EC2 key pair..."
+echo "[4/6] Creating EC2 key pair..."
 KEY_NAME="$APP_NAME-key"
 
 aws ec2 create-key-pair \
@@ -156,9 +104,9 @@ chmod 600 ~/.ssh/$KEY_NAME.pem 2>/dev/null || true
 echo "  Key saved to: ~/.ssh/$KEY_NAME.pem"
 echo "  IMPORTANT: Add contents of this file to GitHub Secret EC2_SSH_KEY"
 
-# ── 6. Launch t3.small EC2 instance ──────────────────────────────────────────
+# ── 5. Launch t3.small EC2 instance ──────────────────────────────────────────
 echo ""
-echo "[6/6] Launching t3.small EC2 instance..."
+echo "[5/6] Launching t3.small EC2 instance..."
 
 # Ubuntu 22.04 LTS AMI (us-east-1)
 AMI_ID=$(aws ec2 describe-images \
@@ -200,6 +148,15 @@ INSTANCE_ID=$(aws ec2 run-instances \
   --query 'Instances[0].InstanceId' \
   --output text 2>/dev/null) || echo "  Instance may already exist"
 
+if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+  INSTANCE_ID=$(aws ec2 describe-instances \
+    --region $REGION \
+    --filters "Name=tag:Name,Values=$APP_NAME-backend" \
+              "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+    --query 'Reservations[0].Instances[0].InstanceId' \
+    --output text 2>/dev/null)
+fi
+
 if [ ! -z "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   echo "  Waiting for instance to start..."
   aws ec2 wait instance-running --region $REGION --instance-ids $INSTANCE_ID
@@ -212,6 +169,135 @@ if [ ! -z "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
 
   echo "  Instance ID: $INSTANCE_ID"
   echo "  Public IP: $EC2_IP"
+fi
+
+# ── 6. CloudFront distribution with backend routing ──────────────────────────
+echo ""
+echo "[6/6] Creating CloudFront distribution..."
+
+CF_ID=""
+CF_DOMAIN=""
+
+if [ -z "$EC2_IP" ] || [ "$EC2_IP" = "None" ]; then
+  echo "  Skipping CloudFront creation because no EC2 public IP was found."
+  echo "  Re-run this step after the backend instance exists."
+else
+  CF_CONFIG=$(cat <<EOF
+{
+  "Origins": {
+    "Quantity": 2,
+    "Items": [
+      {
+        "Id": "S3-$BUCKET_NAME",
+        "DomainName": "$BUCKET_NAME.s3-website-$REGION.amazonaws.com",
+        "CustomOriginConfig": {
+          "HTTPPort": 80,
+          "HTTPSPort": 443,
+          "OriginProtocolPolicy": "http-only"
+        }
+      },
+      {
+        "Id": "EC2-$EC2_IP",
+        "DomainName": "$EC2_IP",
+        "CustomOriginConfig": {
+          "HTTPPort": 8000,
+          "HTTPSPort": 443,
+          "OriginProtocolPolicy": "http-only",
+          "OriginSslProtocols": {
+            "Quantity": 1,
+            "Items": ["TLSv1.2"]
+          }
+        }
+      }
+    ]
+  },
+  "DefaultCacheBehavior": {
+    "TargetOriginId": "S3-$BUCKET_NAME",
+    "ViewerProtocolPolicy": "redirect-to-https",
+    "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+    "Compress": true
+  },
+  "CacheBehaviors": {
+    "Quantity": 3,
+    "Items": [
+      {
+        "PathPattern": "/api/*",
+        "TargetOriginId": "EC2-$EC2_IP",
+        "ViewerProtocolPolicy": "redirect-to-https",
+        "AllowedMethods": {
+          "Quantity": 7,
+          "Items": ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"],
+          "CachedMethods": {
+            "Quantity": 2,
+            "Items": ["GET", "HEAD"]
+          }
+        },
+        "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+        "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
+        "Compress": true
+      },
+      {
+        "PathPattern": "/health",
+        "TargetOriginId": "EC2-$EC2_IP",
+        "ViewerProtocolPolicy": "redirect-to-https",
+        "AllowedMethods": {
+          "Quantity": 2,
+          "Items": ["GET", "HEAD"],
+          "CachedMethods": {
+            "Quantity": 2,
+            "Items": ["GET", "HEAD"]
+          }
+        },
+        "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+        "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
+        "Compress": true
+      },
+      {
+        "PathPattern": "/metrics",
+        "TargetOriginId": "EC2-$EC2_IP",
+        "ViewerProtocolPolicy": "redirect-to-https",
+        "AllowedMethods": {
+          "Quantity": 2,
+          "Items": ["GET", "HEAD"],
+          "CachedMethods": {
+            "Quantity": 2,
+            "Items": ["GET", "HEAD"]
+          }
+        },
+        "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+        "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
+        "Compress": true
+      }
+    ]
+  },
+  "DefaultRootObject": "index.html",
+  "CustomErrorResponses": {
+    "Quantity": 1,
+    "Items": [{
+      "ErrorCode": 404,
+      "ResponseCode": "200",
+      "ResponsePagePath": "/index.html"
+    }]
+  },
+  "Comment": "$APP_NAME frontend + backend API",
+  "Enabled": true,
+  "PriceClass": "PriceClass_100"
+}
+EOF
+)
+
+  CF_RESULT=$(aws cloudfront create-distribution \
+    --distribution-config "$CF_CONFIG" \
+    --query 'Distribution.{ID:Id,Domain:DomainName}' \
+    --output json 2>/dev/null) || echo "  CloudFront may already exist"
+
+  if [ ! -z "$CF_RESULT" ]; then
+    CF_ID=$(echo $CF_RESULT | jq -r '.ID')
+    CF_DOMAIN=$(echo $CF_RESULT | jq -r '.Domain')
+    echo "  CloudFront ID: $CF_ID"
+    echo "  CloudFront URL: https://$CF_DOMAIN"
+    echo "  API is routed through the same domain at /api/*"
+  fi
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────

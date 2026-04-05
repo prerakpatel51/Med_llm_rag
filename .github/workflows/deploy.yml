@@ -124,7 +124,6 @@ jobs:
       - name: Build static export
         env:
           NODE_ENV: production
-          NEXT_PUBLIC_BACKEND_URL: http://${{ secrets.EC2_HOST }}:8000
         run: |
           cd frontend
           npm run build
@@ -148,6 +147,98 @@ jobs:
             --delete \
             --cache-control "no-cache" \
             --include "*.html"
+
+      - name: Ensure CloudFront API routing
+        env:
+          DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          ETAG=$(aws cloudfront get-distribution-config \
+            --id "$DISTRIBUTION_ID" \
+            --query 'ETag' \
+            --output text)
+
+          aws cloudfront get-distribution-config \
+            --id "$DISTRIBUTION_ID" \
+            --query 'DistributionConfig' \
+            --output json > /tmp/cf-config.json
+
+          jq \
+            --arg ec2_host "$EC2_HOST" \
+            --arg ec2_origin_id "EC2-$EC2_HOST" \
+            '
+            def write_behavior($path):
+              {
+                PathPattern: $path,
+                TargetOriginId: $ec2_origin_id,
+                TrustedSigners: {Enabled: false, Quantity: 0},
+                TrustedKeyGroups: {Enabled: false, Quantity: 0},
+                ViewerProtocolPolicy: "redirect-to-https",
+                AllowedMethods: {
+                  Quantity: 7,
+                  Items: ["GET", "HEAD", "OPTIONS", "PUT", "PATCH", "POST", "DELETE"],
+                  CachedMethods: {
+                    Quantity: 2,
+                    Items: ["GET", "HEAD"]
+                  }
+                },
+                SmoothStreaming: false,
+                Compress: true,
+                LambdaFunctionAssociations: {Quantity: 0},
+                FunctionAssociations: {Quantity: 0},
+                FieldLevelEncryptionId: "",
+                CachePolicyId: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+                OriginRequestPolicyId: "216adef6-5c7f-47e4-b989-5492eafa07d3"
+              };
+            def read_behavior($path):
+              write_behavior($path)
+              | .AllowedMethods = {
+                  Quantity: 2,
+                  Items: ["GET", "HEAD"],
+                  CachedMethods: {
+                    Quantity: 2,
+                    Items: ["GET", "HEAD"]
+                  }
+                };
+            .Origins.Items = (
+              (.Origins.Items // [])
+              | map(select(.Id != $ec2_origin_id))
+              + [{
+                  Id: $ec2_origin_id,
+                  DomainName: $ec2_host,
+                  CustomHeaders: {Quantity: 0},
+                  CustomOriginConfig: {
+                    HTTPPort: 8000,
+                    HTTPSPort: 443,
+                    OriginProtocolPolicy: "http-only",
+                    OriginSslProtocols: {
+                      Quantity: 1,
+                      Items: ["TLSv1.2"]
+                    },
+                    OriginReadTimeout: 30,
+                    OriginKeepaliveTimeout: 5
+                  },
+                  ConnectionAttempts: 3,
+                  ConnectionTimeout: 10
+                }]
+            )
+            | .Origins.Quantity = (.Origins.Items | length)
+            | .CacheBehaviors.Items = (
+                ((.CacheBehaviors.Items // [])
+                | map(select(.PathPattern != "/api/*" and .PathPattern != "/health" and .PathPattern != "/metrics")))
+                + [
+                    write_behavior("/api/*"),
+                    read_behavior("/health"),
+                    read_behavior("/metrics")
+                  ]
+              )
+            | .CacheBehaviors.Quantity = (.CacheBehaviors.Items | length)
+            ' /tmp/cf-config.json > /tmp/cf-config-updated.json
+
+          aws cloudfront update-distribution \
+            --id "$DISTRIBUTION_ID" \
+            --if-match "$ETAG" \
+            --distribution-config file:///tmp/cf-config-updated.json
 
       - name: Invalidate CloudFront cache
         run: |
