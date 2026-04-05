@@ -5,7 +5,7 @@
 # This user only has permissions it actually needs:
 #   - ECR: push/pull images
 #   - S3: upload frontend files
-#   - CloudFront: create invalidations
+#   - CloudFront: update distribution config + create invalidations
 #   - EC2: manage spot GPU instance
 #
 # Usage:
@@ -62,6 +62,9 @@ POLICY=$(cat <<EOF
       "Sid": "CloudFrontAccess",
       "Effect": "Allow",
       "Action": [
+        "cloudfront:GetDistribution",
+        "cloudfront:GetDistributionConfig",
+        "cloudfront:UpdateDistribution",
         "cloudfront:CreateInvalidation"
       ],
       "Resource": "*"
