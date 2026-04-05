@@ -4,6 +4,14 @@ A low-cost, retrieval-augmented medical literature assistant that runs on a sing
 
 > ⚕️ **Research use only.** This tool summarizes published literature. It is not a substitute for professional medical advice, diagnosis, or treatment.
 
+## Product capabilities
+
+- Ask questions against the shared literature database and your session-scoped uploaded PDFs in one query.
+- Upload up to **5 PDF files** per batch with a **40 MB combined size limit**.
+- Ingest a user-provided topic from **PubMed only** or from **all supported sources** before asking follow-up questions.
+- Every answer returns a direct answer, a short summary, and the source list used to ground the response.
+- Topic-ingested sources appear in the UI immediately so users can review what was added before querying.
+
 ---
 
 ## Architecture
@@ -224,6 +232,39 @@ If you serve the frontend from `https://` (for example S3 + CloudFront), do not 
 
 To reduce cost: stop the instance when not in use, or use a t3.medium (~$30/month) with reduced Ollama memory limits.
 
+## Cheapest Correct Scalable Architecture
+
+If you want to keep **one EC2 instance normally** and scale out only when user traffic increases, the low-cost production-safe target architecture is:
+
+- `S3 + CloudFront` for the frontend
+- `CloudFront /api/* -> ALB`
+- `ALB -> Auto Scaling Group of backend-only EC2 instances`
+- `RDS PostgreSQL` shared by all backend instances
+- `Prometheus/Grafana` separate from autoscaled app nodes
+
+### Why this change is required
+
+- The current `docker-compose.prod.yml` layout runs backend, Postgres, Prometheus, and Grafana on one box.
+- Adding another backend container on the same instance does **not** solve memory pressure if memory is already high.
+- Multiple EC2 instances require a **shared database** and a **load balancer** or traffic will still hit only one server.
+
+### Practical order for scaling
+
+1. Create `RDS PostgreSQL`.
+2. Split the backend out from the all-in-one EC2 compose layout.
+3. Create an `ALB` and backend target group.
+4. Create a launch template and `Auto Scaling Group`.
+5. Update CloudFront `/api/*` to point to the ALB.
+6. Add a scaling policy, typically CPU first and memory second.
+
+### Recommended autoscaling settings
+
+- `min = 1`
+- `desired = 1`
+- `max = 2`
+
+That keeps one instance running normally and launches a second backend instance only when the scaling threshold is crossed.
+
 ---
 
 ## Kubernetes deployment (portfolio/demo)
@@ -291,6 +332,8 @@ medical-lit-assistant/
 │   │   │   ├── health.py         # /health, /ready
 │   │   │   ├── metrics.py        # /metrics
 │   │   │   ├── query.py          # POST /api/v1/query
+│   │   │   ├── ingest.py         # topic ingestion + background seeding
+│   │   │   ├── uploads.py        # PDF upload ingestion
 │   │   │   └── memory.py         # GET /api/v1/memory
 │   │   ├── core/
 │   │   │   ├── pipeline.py       # Main RAG orchestrator ← start here
@@ -308,6 +351,7 @@ medical-lit-assistant/
 │   │   └── services/
 │   │       ├── vector_store.py   # pgvector search + RRF
 │   │       ├── memory_service.py # Conversation memory
+│   │       ├── pdf_ingestion.py  # session-scoped PDF extraction + storage
 │   │       ├── trust_scorer.py   # Trust score computation
 │   │       └── metrics_service.py # Prometheus metrics
 │   ├── Dockerfile

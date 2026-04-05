@@ -383,16 +383,7 @@ async def ingest_topic(db: AsyncSession, query: str, max_per_source: int = 30) -
     Fetch, process, and store documents for a single topic query.
     Returns the number of new documents stored.
     """
-    fetchers = [
-        PubMedFetcher(),
-        CDCFetcher(),
-        WHOFetcher(),
-        FDAFetcher(),
-    ]
-
-    # Fetch from all sources concurrently
-    fetch_tasks = [fetcher.fetch(query, max_per_source) for fetcher in fetchers]
-    results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+    results = await fetch_topic_documents(query, max_per_source=max_per_source)
 
     new_doc_count = 0
 
@@ -410,6 +401,17 @@ async def ingest_topic(db: AsyncSession, query: str, max_per_source: int = 30) -
     return new_doc_count
 
 
+async def fetch_topic_documents(
+    query: str,
+    max_per_source: int = 30,
+    source_names: list[str] | None = None,
+) -> list[list[dict] | Exception]:
+    """Fetch topic documents from the requested sources without storing them."""
+    fetchers = _get_fetchers(source_names)
+    fetch_tasks = [fetcher.fetch(query, max_per_source) for fetcher in fetchers]
+    return await asyncio.gather(*fetch_tasks, return_exceptions=True)
+
+
 async def ingest_all_topics(db: AsyncSession, max_per_source: int = 30) -> None:
     """Run ingestion for all default topics. Called by the scheduler."""
     total = 0
@@ -421,6 +423,18 @@ async def ingest_all_topics(db: AsyncSession, max_per_source: int = 30) -> None:
         except Exception as e:
             print(f"[ingestion] error for topic '{topic}': {e}")
     print(f"[ingestion] complete. {total} total new documents ingested.")
+
+
+def _get_fetchers(source_names: list[str] | None = None) -> list:
+    source_map = {
+        "pubmed": PubMedFetcher,
+        "cdc": CDCFetcher,
+        "who": WHOFetcher,
+        "fda": FDAFetcher,
+    }
+    if not source_names:
+        source_names = list(source_map)
+    return [source_map[name.lower()]() for name in source_names if name.lower() in source_map]
 
 
 async def _store_document(db: AsyncSession, doc_data: dict) -> bool:

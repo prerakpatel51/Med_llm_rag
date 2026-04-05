@@ -3,11 +3,12 @@ pipeline.py – the main RAG pipeline.
 """
 import time
 import asyncio
+import re
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from app.config import get_settings
-from app.models.schemas import QueryRequest, QueryResponse, Citation
+from app.models.schemas import QueryRequest, QueryResponse, Citation, SourceSummary
 from app.models.database import AsyncSessionLocal
 from app.ingestion.embedder import embed_text
 from app.services.vector_store import semantic_search, bm25_search, reciprocal_rank_fusion
@@ -57,8 +58,18 @@ async def _pipeline(request: QueryRequest, db: AsyncSession, total_start: float)
         boosted_chunk_ids.update(mem.get("retrieved_chunk_ids") or [])
 
     # Run semantic and BM25 search sequentially (same session, avoid concurrency issues)
-    semantic_results = await semantic_search(db, query_embedding, top_k=settings.semantic_top_k)
-    bm25_results = await bm25_search(db, query, top_k=settings.bm25_top_k)
+    semantic_results = await semantic_search(
+        db,
+        query_embedding,
+        session_id=session_id,
+        top_k=settings.semantic_top_k,
+    )
+    bm25_results = await bm25_search(
+        db,
+        query,
+        session_id=session_id,
+        top_k=settings.bm25_top_k,
+    )
 
     # Merge with Reciprocal Rank Fusion
     merged = reciprocal_rank_fusion(semantic_results, bm25_results)
@@ -83,7 +94,9 @@ async def _pipeline(request: QueryRequest, db: AsyncSession, total_start: float)
                 "I could not find any relevant medical literature for your query. "
                 "Try rephrasing or using more specific medical terminology."
             ),
+            summary="No relevant evidence was retrieved for this query.",
             citations=[],
+            sources=[],
         )
 
     # ── Step 5: Generate ──────────────────────────────────────────────────────
@@ -123,7 +136,9 @@ async def _pipeline(request: QueryRequest, db: AsyncSession, total_start: float)
 
     return QueryResponse(
         answer=answer,
+        summary=_build_summary(answer),
         citations=citations,
+        sources=_build_sources(top_chunks),
         judge_flagged=judge_flagged,
         judge_notes=judge_notes,
         retrieval_latency=round(retrieval_latency, 3),
@@ -203,3 +218,39 @@ def _build_citations(chunks: list[dict]) -> list[Citation]:
             excerpt=chunk.get("content", "")[:300],
         ))
     return citations
+
+
+def _build_sources(chunks: list[dict]) -> list[SourceSummary]:
+    seen: set[str] = set()
+    sources: list[SourceSummary] = []
+    for chunk in chunks:
+        key = chunk.get("source_id", "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        sources.append(SourceSummary(
+            source=chunk.get("source", ""),
+            source_id=key,
+            title=chunk.get("title", ""),
+            url=chunk.get("url", ""),
+            journal=chunk.get("journal", ""),
+            published_at=chunk.get("published_at"),
+        ))
+    return sources
+
+
+def _build_summary(answer: str) -> str:
+    cleaned = re.sub(
+        r"This information is for educational purposes only\..*$",
+        "",
+        answer,
+        flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
+    sentences = [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\s+", cleaned)
+        if part.strip()
+    ]
+    if not sentences:
+        return cleaned[:220]
+    return " ".join(sentences[:2])[:320].strip()

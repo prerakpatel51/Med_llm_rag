@@ -46,6 +46,7 @@ async def save_chunks(db: AsyncSession, chunks: list[dict]) -> None:
 async def semantic_search(
     db: AsyncSession,
     query_embedding: list[float],
+    session_id: str | None = None,
     top_k: int = 20,
 ) -> list[dict]:
     """
@@ -69,10 +70,15 @@ async def semantic_search(
                 c.source_id,
                 1 - (c.embedding <=> CAST(:query_embedding AS vector)) AS similarity
             FROM chunks c
+            WHERE c.source != 'upload' OR c.source_id LIKE :upload_source_prefix
             ORDER BY c.embedding <=> CAST(:query_embedding AS vector)
             LIMIT :top_k
         """),
-        {"query_embedding": embedding_str, "top_k": top_k},
+        {
+            "query_embedding": embedding_str,
+            "top_k": top_k,
+            "upload_source_prefix": f"upload:{session_id or '__no_session__'}:%",
+        },
 
     )
     rows = result.mappings().all()
@@ -82,6 +88,7 @@ async def semantic_search(
 async def bm25_search(
     db: AsyncSession,
     query_text: str,
+    session_id: str | None = None,
     top_k: int = 20,
 ) -> list[dict]:
     """
@@ -102,10 +109,15 @@ async def bm25_search(
                            websearch_to_tsquery('english', :query)) AS similarity
             FROM chunks c
             WHERE c.content_tsv @@ websearch_to_tsquery('english', :query)
+              AND (c.source != 'upload' OR c.source_id LIKE :upload_source_prefix)
             ORDER BY similarity DESC
             LIMIT :top_k
         """),
-        {"query": query_text, "top_k": top_k},
+        {
+            "query": query_text,
+            "top_k": top_k,
+            "upload_source_prefix": f"upload:{session_id or '__no_session__'}:%",
+        },
     )
     rows = result.mappings().all()
     return [dict(row) for row in rows]

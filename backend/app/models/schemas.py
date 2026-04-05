@@ -3,7 +3,7 @@ schemas.py – Pydantic models for API request and response bodies.
 These are what FastAPI validates and serializes automatically.
 """
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -35,11 +35,22 @@ class Citation(BaseModel):
     excerpt: str         # the actual chunk text shown to the user
 
 
+class SourceSummary(BaseModel):
+    source: str
+    source_id: str
+    title: str
+    url: str = ""
+    journal: str = ""
+    published_at: Optional[datetime] = None
+
+
 # ── Full response from the assistant ─────────────────────────────────────────
 
 class QueryResponse(BaseModel):
     answer: str
+    summary: str = ""
     citations: list[Citation]
+    sources: list[SourceSummary] = []
     judge_flagged: bool = False      # True if the judge found unsupported claims
     judge_notes: str = ""            # human-readable explanation of any flags
     retrieval_latency: float = 0.0   # seconds
@@ -72,3 +83,29 @@ class HealthResponse(BaseModel):
 class ReadyResponse(BaseModel):
     status: str          # "ready" or "not_ready"
     checks: dict         # name → "ok" / error message
+
+
+class UploadedPdfSummary(BaseModel):
+    file_name: str
+    source_id: str
+    chunk_count: int
+    size_bytes: int
+    title: str
+
+
+class PdfUploadResponse(BaseModel):
+    session_id: str
+    uploaded: list[UploadedPdfSummary]
+
+
+class TopicIngestRequest(BaseModel):
+    topic: str = Field(..., min_length=3, max_length=200)
+    max_results: int = Field(default=10, ge=1, le=25)
+    source: Literal["pubmed", "all"] = "pubmed"
+
+
+class TopicIngestResponse(BaseModel):
+    topic: str
+    source: str
+    new_documents: int
+    documents: list[SourceSummary]

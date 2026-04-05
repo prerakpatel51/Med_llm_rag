@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # ── Safety ────────────────────────────────────────────────────────────────
     enable_judge: bool = True
     max_query_length: int = 1000
+    max_pdf_upload_files: int = 5
+    max_pdf_upload_bytes: int = 40 * 1024 * 1024
 
     # ── AWS ───────────────────────────────────────────────────────────────────
     aws_region: str = "us-east-1"
