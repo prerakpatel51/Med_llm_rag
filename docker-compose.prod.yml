@@ -1,0 +1,141 @@
+##############################################################################
+# docker-compose.prod.yml – production deployment on EC2 t3.small
+#
+# Differences from docker-compose.yml:
+#   - Backend pulls pre-built image from ECR (no build on EC2)
+#   - No Ollama container (GPU managed separately via ec2_manager.py)
+#   - No frontend (served from S3/CloudFront)
+#   - Postgres, Prometheus, Grafana run here
+#
+# On EC2: docker compose -f docker-compose.prod.yml up -d
+##############################################################################
+
+services:
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: medlit-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-medlit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-medlit}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medlit}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - medlit-net
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=50
+
+  # ── Backend (pulled from ECR) ─────────────────────────────────────────────
+  backend:
+    image: ${ECR_IMAGE}   # set by GitHub Actions: ACCOUNT.dkr.ecr.REGION.amazonaws.com/med-llm-rag-backend:latest
+    container_name: medlit-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-medlit}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-medlit}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}   # points to GPU spot instance IP when running
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:14b}
+      OLLAMA_IDLE_TIMEOUT: "300"            # 5 min idle → terminate GPU instance
+      NCBI_API_KEY: ${NCBI_API_KEY}
+      NCBI_EMAIL: ${NCBI_EMAIL}
+      SECRET_KEY: ${SECRET_KEY}
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      # AWS creds so backend can manage GPU spot instance
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      GPU_INSTANCE_TYPE: g4dn.xlarge
+      GPU_AMI_ID: ${GPU_AMI_ID}
+      GPU_SPOT_MAX_PRICE: "0.30"
+      GPU_IDLE_TIMEOUT: "300"
+    volumes:
+      - hf_cache:/app/hf-cache
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - medlit-net
+
+  # ── Prometheus ────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: medlit-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    networks:
+      - medlit-net
+
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: medlit-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - medlit-net
+
+  # ── Node Exporter ─────────────────────────────────────────────────────────
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: medlit-node-exporter
+    restart: unless-stopped
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    networks:
+      - medlit-net
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
+  hf_cache:
+
+networks:
+  medlit-net:
+    driver: bridge

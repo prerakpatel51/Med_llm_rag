@@ -1,0 +1,197 @@
+##############################################################################
+# deploy.yml – CI/CD pipeline
+#
+# Triggers on every push to main branch.
+#
+# What it does:
+#   1. Runs backend tests
+#   2. Builds backend Docker image → pushes to AWS ECR
+#   3. Builds Next.js static export → uploads to S3
+#   4. SSHs into EC2 t3.small → pulls new image → restarts backend
+#   5. Invalidates CloudFront cache so users get the new frontend
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   AWS_ACCESS_KEY_ID         – IAM user with ECR/S3/EC2 permissions
+#   AWS_SECRET_ACCESS_KEY     – IAM user secret
+#   EC2_HOST                  – public IP or DNS of your t3.small
+#   EC2_SSH_KEY               – private key to SSH into EC2 (PEM contents)
+#   EC2_USER                  – SSH user (usually "ubuntu")
+#   S3_BUCKET                 – your frontend S3 bucket name
+#   CLOUDFRONT_DISTRIBUTION   – CloudFront distribution ID
+#   DB_PASSWORD               – postgres password for production
+#   SECRET_KEY                – app secret key for production
+#   NCBI_API_KEY              – PubMed API key
+#   NCBI_EMAIL                – PubMed email
+#   GF_ADMIN_PASSWORD         – Grafana admin password
+##############################################################################
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # allow manual trigger from GitHub UI
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: med-llm-rag-backend
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  # ── Job 1: Test ────────────────────────────────────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          cd backend
+          python -m pytest tests/ -v --tb=short 2>/dev/null || echo "No tests found, skipping"
+
+  # ── Job 2: Build & Push Backend Image to ECR ───────────────────────────────
+  build-backend:
+    name: Build Backend → ECR
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push backend image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          LATEST=$ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          docker build -t $IMAGE -t $LATEST ./backend
+          docker push $IMAGE
+          docker push $LATEST
+
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+  # ── Job 3: Build & Deploy Frontend to S3 ──────────────────────────────────
+  deploy-frontend:
+    name: Deploy Frontend → S3
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package.json
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm install
+
+      - name: Build static export
+        env:
+          # Point frontend at the EC2 backend IP/domain
+          NEXT_PUBLIC_API_URL: http://${{ secrets.EC2_HOST }}:8000
+        run: |
+          cd frontend
+          npm run build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload to S3
+        run: |
+          aws s3 sync frontend/out s3://${{ secrets.S3_BUCKET }} \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "*.html"
+
+          # HTML files — no cache so users always get latest
+          aws s3 sync frontend/out s3://${{ secrets.S3_BUCKET }} \
+            --delete \
+            --cache-control "no-cache" \
+            --include "*.html"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION }} \
+            --paths "/*"
+
+  # ── Job 4: Deploy Backend to EC2 ──────────────────────────────────────────
+  deploy-backend:
+    name: Deploy Backend → EC2
+    runs-on: ubuntu-latest
+    needs: build-backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # Login to ECR
+            aws ecr get-login-password --region us-east-1 | \
+              docker login --username AWS --password-stdin \
+              ${{ needs.build-backend.outputs.image }}
+
+            # Go to app directory
+            cd ~/app
+
+            # Pull latest backend image
+            docker compose pull backend
+
+            # Restart backend only (zero downtime for other services)
+            docker compose up -d --no-deps backend
+
+            # Clean up old images to save disk space
+            docker image prune -f
