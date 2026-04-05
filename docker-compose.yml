@@ -67,7 +67,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      # No longer wait for ollama – it starts on first query
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
       interval: 15s

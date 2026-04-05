@@ -4,9 +4,9 @@
 
 import type { QueryResponse, MemoryEntry } from "./types";
 
-// Direct backend URL for long-running requests (avoids Next.js proxy timeout)
+// Backend URL — uses env var in production (S3/CloudFront), falls back to same-host for local dev
 const BACKEND_DIRECT = typeof window !== "undefined"
-  ? `${window.location.protocol}//${window.location.hostname}:8000`
+  ? (process.env.NEXT_PUBLIC_BACKEND_URL || `${window.location.protocol}//${window.location.hostname}:8000`)
   : "http://backend:8000";
 
 const BASE = "/api/v1";
@@ -38,14 +38,14 @@ export async function fetchMemory(
   limit: number = 50
 ): Promise<MemoryEntry[]> {
   const res = await fetch(
-    `${BASE}/memory?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`
+    `${BACKEND_DIRECT}/api/v1/memory?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
 export async function checkHealth(): Promise<{ status: string }> {
-  const res = await fetch("/health");
+  const res = await fetch(`${BACKEND_DIRECT}/health`);
   if (!res.ok) return { status: "error" };
   return res.json();
 }
