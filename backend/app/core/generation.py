@@ -63,7 +63,11 @@ async def generate(query: str, context_chunks: list[dict]) -> tuple[str, int, in
     Returns:
         (answer_text, tokens_in, tokens_out)
     """
-    from app.services.ollama_manager import ensure_ollama_running, record_usage
+    # Use EC2 GPU manager in production, Docker manager locally
+    if settings.gpu_ami_id:
+        from app.services.ec2_gpu_manager import ensure_ollama_running, record_usage
+    else:
+        from app.services.ollama_manager import ensure_ollama_running, record_usage
     await ensure_ollama_running()   # no-op if already running, starts if stopped
 
     prompt, tokens_in = build_prompt(query, context_chunks)

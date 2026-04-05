@@ -49,8 +49,18 @@ class Settings(BaseSettings):
 
     # ── Ollama on-demand lifecycle ────────────────────────────────────────────
     # Stop the Ollama container after this many seconds with no queries.
-    # 600 = 10 minutes. Set lower (e.g. 300) to save more RAM.
-    ollama_idle_timeout: int = 600
+    # 300 = 5 minutes.
+    ollama_idle_timeout: int = 300
+
+    # ── AWS GPU Spot Instance ─────────────────────────────────────────────────
+    aws_region: str = "us-east-1"
+    gpu_instance_type: str = "g4dn.xlarge"
+    gpu_ami_id: str = ""                 # custom AMI with Ollama + model pre-baked
+    gpu_spot_max_price: str = "0.30"     # max $/hr for spot bid
+    gpu_idle_timeout: int = 300          # 5 min idle → terminate
+    gpu_security_group: str = ""         # SG allowing port 11434 from backend
+    gpu_key_name: str = "med-llm-rag-key"
+    gpu_subnet_id: str = ""              # leave blank for default VPC
 
     # ── External APIs ─────────────────────────────────────────────────────────
     ncbi_api_key: str = ""             # free at ncbi.nlm.nih.gov/account

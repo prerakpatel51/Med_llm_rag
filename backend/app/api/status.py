@@ -5,7 +5,15 @@ The frontend polls this before the user submits a query so it can show
 "Model ready" vs "Model will warm up (~15s)" in the UI.
 """
 from fastapi import APIRouter
-from app.services.ollama_manager import get_ollama_status
+from app.config import get_settings
+
+settings = get_settings()
+
+# Use EC2 GPU manager in production, Docker manager locally
+if settings.gpu_ami_id:
+    from app.services.ec2_gpu_manager import get_ollama_status
+else:
+    from app.services.ollama_manager import get_ollama_status
 
 router = APIRouter()
 

@@ -61,6 +61,8 @@ services:
       GPU_AMI_ID: ${GPU_AMI_ID}
       GPU_SPOT_MAX_PRICE: "0.30"
       GPU_IDLE_TIMEOUT: "300"
+      GPU_SECURITY_GROUP: ${GPU_SECURITY_GROUP}
+      GPU_KEY_NAME: med-llm-rag-key
     volumes:
       - hf_cache:/app/hf-cache
     ports:
