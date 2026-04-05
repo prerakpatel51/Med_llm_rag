@@ -15,6 +15,9 @@ pydantic-settings==2.5.2
 # HTTP client (for Groq API, NCBI, CDC, WHO, FDA APIs)
 httpx==0.27.2
 
+# Force CPU-only torch wheels so backend images stay small enough for t3-based nodes.
+torch==2.7.1+cpu
+
 # Embeddings (all-MiniLM-L6-v2, 22 MB)
 sentence-transformers==3.1.1
 

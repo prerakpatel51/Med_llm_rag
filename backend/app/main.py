@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,13 +29,19 @@ async def _run_ingestion():
             print(f"[ingestion] scheduler job error: {e}")
 
 
+async def _warm_embedding_model():
+    """Warm the embedder after startup without blocking health checks."""
+    try:
+        print("[startup] Warming embedding model in background…")
+        await asyncio.to_thread(load_model)
+        print("[startup] Embedding model ready.")
+    except Exception as e:
+        print(f"[startup] Embedding warmup failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────────────
-    print("[startup] Loading embedding model…")
-    load_model()
-    print("[startup] Embedding model ready.")
-
     print("[startup] Ensuring database schema…")
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -52,6 +59,7 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     print("[startup] Scheduler started (ingestion runs every 6 hours).")
     print("[startup] To trigger ingestion now: POST /api/v1/ingest")
+    asyncio.create_task(_warm_embedding_model())
 
     yield
 

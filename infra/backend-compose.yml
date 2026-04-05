@@ -1,0 +1,27 @@
+services:
+  backend:
+    image: ${ECR_IMAGE}
+    container_name: medlit-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
+      NCBI_API_KEY: ${NCBI_API_KEY}
+      NCBI_EMAIL: ${NCBI_EMAIL}
+      SECRET_KEY: ${SECRET_KEY}
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+    volumes:
+      - hf_cache:/app/hf-cache
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+volumes:
+  hf_cache:

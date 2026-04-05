@@ -153,13 +153,26 @@ jobs:
           DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION }}
           EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
-          if [[ "$EC2_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          ALB_HOST=$(aws elbv2 describe-load-balancers \
+            --names med-llm-rag-backend-alb \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text 2>/dev/null || true)
+
+          if [[ -n "$ALB_HOST" && "$ALB_HOST" != "None" ]]; then
+            ORIGIN_HOST="$ALB_HOST"
+            ORIGIN_ID="ALB-$ALB_HOST"
+            ORIGIN_PORT=80
+          elif [[ "$EC2_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             ORIGIN_HOST=$(aws ec2 describe-instances \
               --filters "Name=ip-address,Values=$EC2_HOST" \
               --query 'Reservations[0].Instances[0].PublicDnsName' \
               --output text)
+            ORIGIN_ID="EC2-$ORIGIN_HOST"
+            ORIGIN_PORT=8000
           else
             ORIGIN_HOST="$EC2_HOST"
+            ORIGIN_ID="EC2-$ORIGIN_HOST"
+            ORIGIN_PORT=8000
           fi
 
           if [[ -z "$ORIGIN_HOST" || "$ORIGIN_HOST" == "None" ]]; then
@@ -178,13 +191,14 @@ jobs:
             --output json > /tmp/cf-config.json
 
           jq \
-            --arg ec2_host "$ORIGIN_HOST" \
-            --arg ec2_origin_id "EC2-$ORIGIN_HOST" \
+            --arg origin_host "$ORIGIN_HOST" \
+            --arg origin_id "$ORIGIN_ID" \
+            --argjson origin_port "$ORIGIN_PORT" \
             '
             def write_behavior($path):
               {
                 PathPattern: $path,
-                TargetOriginId: $ec2_origin_id,
+                TargetOriginId: $origin_id,
                 TrustedSigners: {Enabled: false, Quantity: 0},
                 TrustedKeyGroups: {Enabled: false, Quantity: 0},
                 ViewerProtocolPolicy: "redirect-to-https",
@@ -216,14 +230,14 @@ jobs:
                 };
             .Origins.Items = (
               (.Origins.Items // [])
-              | map(select(.Id != $ec2_origin_id))
+              | map(select(.Id != $origin_id))
               + [{
-                  Id: $ec2_origin_id,
-                  DomainName: $ec2_host,
+                  Id: $origin_id,
+                  DomainName: $origin_host,
                   OriginPath: "",
                   CustomHeaders: {Quantity: 0},
                   CustomOriginConfig: {
-                    HTTPPort: 8000,
+                    HTTPPort: $origin_port,
                     HTTPSPort: 443,
                     OriginProtocolPolicy: "http-only",
                     OriginSslProtocols: {
@@ -281,25 +295,30 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy to EC2 via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            # Login to ECR
-            aws ecr get-login-password --region us-east-1 | \
-              docker login --username AWS --password-stdin \
-              401713183841.dkr.ecr.us-east-1.amazonaws.com
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names med-llm-rag-backend-asg \
+            --query 'AutoScalingGroups[0].AutoScalingGroupName' \
+            --output text 2>/dev/null || true)
 
-            # Go to app directory
-            cd ~/app
-
-            # Pull latest backend image
-            docker-compose -f docker-compose.prod.yml pull backend
-
-            # Restart backend only (zero downtime for other services)
-            docker-compose -f docker-compose.prod.yml up -d --no-deps backend
-
-            # Clean up old images to save disk space
-            docker image prune -f
+          if [[ -n "$ASG_NAME" && "$ASG_NAME" != "None" ]]; then
+            aws autoscaling start-instance-refresh \
+              --auto-scaling-group-name "$ASG_NAME" \
+              --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300}'
+          else
+            echo "No scalable backend ASG found; falling back to single EC2 deploy."
+            mkdir -p ~/.ssh
+            printf '%s\n' '${{ secrets.EC2_SSH_KEY }}' > ~/.ssh/medlit-ec2.pem
+            chmod 600 ~/.ssh/medlit-ec2.pem
+            ssh -i ~/.ssh/medlit-ec2.pem -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@$EC2_HOST <<'EOF'
+              aws ecr get-login-password --region us-east-1 | \
+                docker login --username AWS --password-stdin \
+                401713183841.dkr.ecr.us-east-1.amazonaws.com
+              cd ~/app
+              docker-compose -f docker-compose.prod.yml pull backend
+              docker-compose -f docker-compose.prod.yml up -d --no-deps backend
+              docker image prune -f
+            EOF
+          fi

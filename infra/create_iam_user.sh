@@ -6,6 +6,7 @@
 #   - ECR: push/pull images
 #   - S3: upload frontend files
 #   - CloudFront: update distribution config + create invalidations
+#   - Auto Scaling / ELB: refresh scaled backend fleet and discover ALB
 #   - EC2: manage spot GPU instance
 #
 # Usage:
@@ -66,6 +67,16 @@ POLICY=$(cat <<EOF
         "cloudfront:GetDistributionConfig",
         "cloudfront:UpdateDistribution",
         "cloudfront:CreateInvalidation"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ScalingAccess",
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:StartInstanceRefresh",
+        "elasticloadbalancing:DescribeLoadBalancers"
       ],
       "Resource": "*"
     },
