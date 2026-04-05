@@ -24,11 +24,6 @@ apscheduler==3.10.4
 # Monitoring
 prometheus-client==0.21.0
 
-# Docker SDK – lets the backend start/stop the Ollama container locally
-docker==7.1.0
-
-# AWS SDK – manages spot GPU instances on demand
-boto3==1.35.0
 
 # Utilities
 python-multipart==0.0.12   # for form data (future use)

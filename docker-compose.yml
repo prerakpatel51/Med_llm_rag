@@ -3,7 +3,7 @@
 #
 # Services:
 #   postgres    – PostgreSQL 16 with pgvector extension
-#   ollama      – Ollama LLM server running Qwen2.5 7B
+#   (LLM via Groq API – Llama 3.1 70B, no local GPU needed)
 #   backend     – FastAPI application
 #   frontend    – Next.js application
 #   prometheus  – metrics collection
@@ -47,28 +47,6 @@ services:
       -c maintenance_work_mem=64MB
       -c max_connections=50
 
-  # ── Ollama (LLM server) – started ON DEMAND by the backend ──────────────────
-  # This container is NOT auto-restarted. The backend starts it when a query
-  # arrives and stops it after OLLAMA_IDLE_TIMEOUT seconds of no activity.
-  # On first-ever start it downloads Qwen2.5 7B (~5GB) automatically.
-  ollama:
-    image: ollama/ollama:latest
-    container_name: medlit-ollama
-    restart: "no"            # backend manages the lifecycle, not Docker
-    environment:
-      # Keep model loaded in RAM for the full idle window (backend controls shutdown)
-      OLLAMA_KEEP_ALIVE: "-1"
-    volumes:
-      - ollama_data:/root/.ollama   # weights cached here; survives container stop/start
-    ports:
-      - "11434:11434"
-    networks:
-      - medlit-net
-    # On first start: pull the model then serve. On subsequent starts: just serve.
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      "ollama serve & sleep 5 && ollama pull qwen2.5:7b && wait"
-
   # ── FastAPI backend ───────────────────────────────────────────────────────
   backend:
     build:
@@ -79,13 +57,9 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-medlit}:${POSTGRES_PASSWORD:-medlit}@postgres:5432/${POSTGRES_DB:-medlit}
-      OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: qwen2.5:7b
-      # Stop Ollama container after 10 min of no queries (saves ~800 MB RAM)
-      OLLAMA_IDLE_TIMEOUT: "600"
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.1-70b-versatile}
     volumes:
-      # Mount Docker socket so backend can start/stop the Ollama container
-      - /var/run/docker.sock:/var/run/docker.sock
       # Cache the embedding model so it only downloads once
       - hf_cache:/app/hf-cache
     ports:
@@ -194,7 +168,6 @@ services:
 # ── Persistent volumes ────────────────────────────────────────────────────────
 volumes:
   postgres_data:
-  ollama_data:       # stores downloaded model weights (~5 GB for Qwen2.5 7B)
   prometheus_data:
   grafana_data:
   hf_cache:          # embedding model cache (all-MiniLM-L6-v2, ~90 MB, downloads once)

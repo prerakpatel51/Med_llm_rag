@@ -16,11 +16,10 @@ class Settings(BaseSettings):
     # ── Database ─────────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://medlit:medlit@postgres:5432/medlit"
 
-    # ── Ollama (LLM server) ───────────────────────────────────────────────────
-    ollama_base_url: str = "http://ollama:11434"
-    ollama_model: str = "gemma3:1b"
-    ollama_timeout: int = 300           # seconds before giving up on generation
-    max_new_tokens: int = 512
+    # ── LLM (Groq API — Llama 3.1 70B) ──────────────────────────────────────
+    groq_api_key: str = ""
+    llm_model: str = "llama-3.1-70b-versatile"
+    max_new_tokens: int = 1024
     temperature: float = 0.1            # low = more factual, less creative
 
     # ── Embedding model ───────────────────────────────────────────────────────
@@ -47,20 +46,8 @@ class Settings(BaseSettings):
     enable_judge: bool = True
     max_query_length: int = 1000
 
-    # ── Ollama on-demand lifecycle ────────────────────────────────────────────
-    # Stop the Ollama container after this many seconds with no queries.
-    # 300 = 5 minutes.
-    ollama_idle_timeout: int = 300
-
-    # ── AWS GPU Spot Instance ─────────────────────────────────────────────────
+    # ── AWS ───────────────────────────────────────────────────────────────────
     aws_region: str = "us-east-1"
-    gpu_instance_type: str = "g4dn.xlarge"
-    gpu_ami_id: str = ""                 # custom AMI with Ollama + model pre-baked
-    gpu_spot_max_price: str = "0.30"     # max $/hr for spot bid
-    gpu_idle_timeout: int = 300          # 5 min idle → terminate
-    gpu_security_group: str = ""         # SG allowing port 11434 from backend
-    gpu_key_name: str = "med-llm-rag-key"
-    gpu_subnet_id: str = ""              # leave blank for default VPC
 
     # ── External APIs ─────────────────────────────────────────────────────────
     ncbi_api_key: str = ""             # free at ncbi.nlm.nih.gov/account

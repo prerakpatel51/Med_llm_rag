@@ -45,24 +45,13 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-medlit}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-medlit}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}   # points to GPU spot instance IP when running
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:14b}
-      OLLAMA_IDLE_TIMEOUT: "300"            # 5 min idle → terminate GPU instance
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.1-70b-versatile}
       NCBI_API_KEY: ${NCBI_API_KEY}
       NCBI_EMAIL: ${NCBI_EMAIL}
       SECRET_KEY: ${SECRET_KEY}
       DEBUG: "false"
       LOG_LEVEL: INFO
-      # AWS creds so backend can manage GPU spot instance
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_REGION: ${AWS_REGION:-us-east-1}
-      GPU_INSTANCE_TYPE: g4dn.xlarge
-      GPU_AMI_ID: ${GPU_AMI_ID}
-      GPU_SPOT_MAX_PRICE: "0.30"
-      GPU_IDLE_TIMEOUT: "300"
-      GPU_SECURITY_GROUP: ${GPU_SECURITY_GROUP}
-      GPU_KEY_NAME: med-llm-rag-key
     volumes:
       - hf_cache:/app/hf-cache
     ports:
