@@ -12,7 +12,7 @@ settings = get_settings()
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # System prompt that tells the model to behave as a literature assistant
-SYSTEM_PROMPT = """You are a medical literature research assistant. Answer STRICTLY from the numbered evidence chunks below. Do NOT use any knowledge from your training data.
+MEDICAL_SYSTEM_PROMPT = """You are a medical literature research assistant. Answer STRICTLY from the numbered evidence chunks below. Do NOT use any knowledge from your training data.
 
 STRICT RULES:
 1. Read each evidence chunk carefully.
@@ -24,6 +24,15 @@ STRICT RULES:
 7. End every response with: "This information is for educational purposes only. Consult a healthcare provider for personal medical decisions."
 
 Remember: If the answer is not in the chunks above, say you don't have enough evidence. Do not guess."""
+
+UPLOAD_SYSTEM_PROMPT = """You are a grounded document assistant. Answer STRICTLY from the numbered evidence chunks below. Do NOT use outside knowledge.
+
+STRICT RULES:
+1. Answer only from the supplied evidence chunks.
+2. If the answer is not present in the evidence, say: "The uploaded and retrieved evidence does not directly answer this question."
+3. Cite factual claims with chunk numbers like [1] or [2].
+4. Do not invent chapter names, headings, or facts that are not explicitly supported.
+5. Keep the answer concise and directly responsive to the question."""
 
 
 def build_context(context_chunks: list[dict]) -> str:
@@ -48,12 +57,13 @@ async def generate(query: str, context_chunks: list[dict], model_override: str |
     Returns:
         (answer_text, tokens_in, tokens_out)
     """
+    has_uploaded_content = any(chunk.get("source") == "upload" for chunk in context_chunks)
     context_text = build_context(context_chunks)
 
     messages = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT,
+            "content": UPLOAD_SYSTEM_PROMPT if has_uploaded_content else MEDICAL_SYSTEM_PROMPT,
         },
         {
             "role": "user",

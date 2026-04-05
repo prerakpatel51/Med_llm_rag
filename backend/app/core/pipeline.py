@@ -79,7 +79,8 @@ async def _pipeline(request: QueryRequest, db: AsyncSession, total_start: float)
         rrf = chunk.get("rrf_score", 0.0)
         trust = chunk.get("trust_score", 0.5)
         memory_boost = settings.memory_boost if chunk["id"] in boosted_chunk_ids else 0.0
-        chunk["final_score"] = 0.70 * rrf + 0.30 * trust + memory_boost
+        upload_boost = settings.upload_result_boost if chunk.get("source") == "upload" else 0.0
+        chunk["final_score"] = 0.70 * rrf + 0.30 * trust + memory_boost + upload_boost
 
     merged.sort(key=lambda c: c["final_score"], reverse=True)
     top_chunks = merged[: settings.rerank_top_k]
@@ -240,6 +241,13 @@ def _build_sources(chunks: list[dict]) -> list[SourceSummary]:
 
 
 def _build_summary(answer: str) -> str:
+    fallback_pattern = re.compile(
+        r"The retrieved literature does not directly answer this question",
+        flags=re.IGNORECASE,
+    )
+    if fallback_pattern.search(answer):
+        return "No grounded answer was found in the retrieved evidence."
+
     cleaned = re.sub(
         r"This information is for educational purposes only\..*$",
         "",

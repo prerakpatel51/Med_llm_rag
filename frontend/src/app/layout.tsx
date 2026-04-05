@@ -30,7 +30,7 @@ export default function RootLayout({
             </div>
             <nav className="flex gap-4 text-sm text-gray-500">
               <a href="/" className="hover:text-blue-600">Chat</a>
-              <a href="/history" className="hover:text-blue-600">History</a>
+              <a href="/history/" className="hover:text-blue-600">History</a>
             </nav>
           </header>
 

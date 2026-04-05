@@ -105,10 +105,21 @@ async def bm25_search(
                 c.trust_score,
                 c.source,
                 c.source_id,
-                ts_rank_cd(c.content_tsv,
-                           websearch_to_tsquery('english', :query)) AS similarity
+                (
+                    ts_rank_cd(c.content_tsv, websearch_to_tsquery('english', :query))
+                    + CASE
+                        WHEN to_tsvector('english', COALESCE(d.title, ''))
+                             @@ websearch_to_tsquery('english', :query)
+                        THEN 2.0
+                        ELSE 0.0
+                      END
+                ) AS similarity
             FROM chunks c
-            WHERE c.content_tsv @@ websearch_to_tsquery('english', :query)
+            JOIN documents d ON d.id = c.document_id
+            WHERE (
+                c.content_tsv @@ websearch_to_tsquery('english', :query)
+                OR to_tsvector('english', COALESCE(d.title, '')) @@ websearch_to_tsquery('english', :query)
+            )
               AND (c.source != 'upload' OR c.source_id LIKE :upload_source_prefix)
             ORDER BY similarity DESC
             LIMIT :top_k

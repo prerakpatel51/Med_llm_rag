@@ -22,6 +22,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 
   // Assistant message
   const resp = message.response;
+  const shouldShowSummary = !!resp?.summary && resp.summary.trim() !== message.content.trim();
 
   if (message.isLoading) {
     return (
@@ -36,12 +37,12 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[88%] space-y-3">
-        {resp?.summary && (
+        {shouldShowSummary && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-700">
               Summary
             </p>
-            <p className="mt-2 text-sm leading-6 text-emerald-950">{resp.summary}</p>
+            <p className="mt-2 text-sm leading-6 text-emerald-950">{resp?.summary}</p>
           </div>
         )}
 

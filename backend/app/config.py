@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     bm25_top_k: int = 20               # candidates from full-text search
     rerank_top_k: int = 5              # final chunks sent to LLM
     max_context_tokens: int = 1800     # cap on prompt context
+    upload_result_boost: float = 0.25
 
     # ── Chunking ──────────────────────────────────────────────────────────────
     chunk_size: int = 256              # tokens per chunk

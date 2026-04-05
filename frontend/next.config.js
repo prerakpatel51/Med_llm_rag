@@ -6,6 +6,7 @@ const nextConfig = {
   // In production: static export for S3/CloudFront
   // In development: standalone with proxy rewrites
   output: isProd ? "export" : "standalone",
+  trailingSlash: isProd,
 
   // Disable image optimization for static export (S3 can't run Next.js server)
   images: {

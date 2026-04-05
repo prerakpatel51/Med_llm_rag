@@ -5,18 +5,20 @@
 import { useEffect, useState } from "react";
 import { fetchMemory } from "@/lib/api";
 import type { MemoryEntry } from "@/lib/types";
+import { useChatStore } from "@/store/chatStore";
 
 export default function HistoryPage() {
   const [entries, setEntries] = useState<MemoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const { sessionId } = useChatStore();
 
   useEffect(() => {
-    fetchMemory("default", 100)
+    fetchMemory(sessionId, 100)
       .then(setEntries)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [sessionId]);
 
   if (loading) return <p className="p-6 text-gray-400">Loading history…</p>;
   if (error) return <p className="p-6 text-red-500">Error: {error}</p>;

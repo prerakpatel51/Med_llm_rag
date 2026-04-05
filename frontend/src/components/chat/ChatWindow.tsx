@@ -372,6 +372,18 @@ export function ChatWindow() {
 
           <div className="border-t border-slate-200 bg-slate-50/80 px-5 py-4">
             <form onSubmit={handleSubmit} className="space-y-3">
+              {uploadedDocs.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {uploadedDocs.map((doc) => (
+                    <span
+                      key={doc.source_id}
+                      className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-900"
+                    >
+                      PDF: {doc.title}
+                    </span>
+                  ))}
+                </div>
+              )}
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
