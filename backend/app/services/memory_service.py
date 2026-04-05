@@ -87,10 +87,15 @@ async def list_memories(
     """Return recent memories for a given session (for the history page)."""
     result = await db.execute(
         text("""
-            SELECT id, session_id, query_text, response_text, created_at
+            SELECT
+                id,
+                session_id,
+                query_text,
+                response_text,
+                COALESCE(created_at, NOW()) AS created_at
             FROM conversation_memory
             WHERE session_id = :session_id
-            ORDER BY created_at DESC
+            ORDER BY COALESCE(created_at, NOW()) DESC
             LIMIT :limit
         """),
         {"session_id": session_id, "limit": limit},

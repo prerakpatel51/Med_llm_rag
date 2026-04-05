@@ -254,11 +254,14 @@ def _build_summary(answer: str) -> str:
         answer,
         flags=re.IGNORECASE | re.DOTALL,
     ).strip()
+    cleaned = re.sub(r"\[\d+\]", "", cleaned)
+    cleaned = re.sub(r"^According to (the )?evidence chunks,?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
     sentences = [
         part.strip()
         for part in re.split(r"(?<=[.!?])\s+", cleaned)
         if part.strip()
     ]
     if not sentences:
-        return cleaned[:220]
-    return " ".join(sentences[:2])[:320].strip()
+        return cleaned[:180]
+    return " ".join(sentences[:2])[:180].strip()

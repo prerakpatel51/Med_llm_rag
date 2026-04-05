@@ -30,7 +30,9 @@ export default function HistoryPage() {
       <h1 className="text-xl font-semibold text-gray-800">Conversation History</h1>
       {entries.map((entry) => (
         <div key={entry.id} className="bg-white border border-gray-200 rounded-lg p-4 space-y-2">
-          <p className="text-xs text-gray-400">{new Date(entry.created_at).toLocaleString()}</p>
+          <p className="text-xs text-gray-400">
+            {entry.created_at ? new Date(entry.created_at).toLocaleString() : "Unknown time"}
+          </p>
           <p className="font-medium text-gray-800 text-sm">{entry.query_text}</p>
           <p className="text-gray-500 text-sm line-clamp-3">{entry.response_text}</p>
         </div>
