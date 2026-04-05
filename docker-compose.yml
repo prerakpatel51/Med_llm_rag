@@ -1,0 +1,206 @@
+##############################################################################
+# docker-compose.yml – primary deployment file
+#
+# Services:
+#   postgres    – PostgreSQL 16 with pgvector extension
+#   ollama      – Ollama LLM server running Qwen2.5 7B
+#   backend     – FastAPI application
+#   frontend    – Next.js application
+#   prometheus  – metrics collection
+#   grafana     – metrics dashboards
+#   node-exporter – host OS metrics
+#   cadvisor    – Docker container metrics
+#
+# Start everything:   docker compose up -d
+# View logs:          docker compose logs -f backend
+# Stop:               docker compose down
+##############################################################################
+
+services:
+
+  # ── PostgreSQL with pgvector ──────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16   # official image with pgvector pre-installed
+    container_name: medlit-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-medlit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-medlit}
+      POSTGRES_DB: ${POSTGRES_DB:-medlit}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"   # expose for local debugging; remove in production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medlit}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - medlit-net
+    # Tune PostgreSQL for 512 MB RAM (fits on t3.medium)
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=50
+
+  # ── Ollama (LLM server) – started ON DEMAND by the backend ──────────────────
+  # This container is NOT auto-restarted. The backend starts it when a query
+  # arrives and stops it after OLLAMA_IDLE_TIMEOUT seconds of no activity.
+  # On first-ever start it downloads Qwen2.5 7B (~5GB) automatically.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: medlit-ollama
+    restart: "no"            # backend manages the lifecycle, not Docker
+    environment:
+      # Keep model loaded in RAM for the full idle window (backend controls shutdown)
+      OLLAMA_KEEP_ALIVE: "-1"
+    volumes:
+      - ollama_data:/root/.ollama   # weights cached here; survives container stop/start
+    ports:
+      - "11434:11434"
+    networks:
+      - medlit-net
+    # On first start: pull the model then serve. On subsequent starts: just serve.
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "ollama serve & sleep 5 && ollama pull qwen2.5:7b && wait"
+
+  # ── FastAPI backend ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medlit-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-medlit}:${POSTGRES_PASSWORD:-medlit}@postgres:5432/${POSTGRES_DB:-medlit}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: qwen2.5:7b
+      # Stop Ollama container after 10 min of no queries (saves ~800 MB RAM)
+      OLLAMA_IDLE_TIMEOUT: "600"
+    volumes:
+      # Mount Docker socket so backend can start/stop the Ollama container
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Cache the embedding model so it only downloads once
+      - hf_cache:/app/hf-cache
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # No longer wait for ollama – it starts on first query
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - medlit-net
+
+  # ── Next.js frontend ──────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: medlit-frontend
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - medlit-net
+
+  # ── Prometheus ────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: medlit-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"   # keep 15 days of data
+      - "--web.enable-lifecycle"               # allow config reload via API
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"   # internal only in production; expose for debugging here
+    networks:
+      - medlit-net
+
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: medlit-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"   # Grafana runs on port 3000 internally
+    depends_on:
+      - prometheus
+    networks:
+      - medlit-net
+
+  # ── Node Exporter (host OS metrics) ──────────────────────────────────────
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: medlit-node-exporter
+    restart: unless-stopped
+    pid: host            # needed to read host-level process stats
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    networks:
+      - medlit-net
+
+  # ── cAdvisor (Docker container metrics) ──────────────────────────────────
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.50.0
+    container_name: medlit-cadvisor
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    networks:
+      - medlit-net
+
+
+# ── Persistent volumes ────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+  ollama_data:       # stores downloaded model weights (~5 GB for Qwen2.5 7B)
+  prometheus_data:
+  grafana_data:
+  hf_cache:          # embedding model cache (all-MiniLM-L6-v2, ~90 MB, downloads once)
+
+
+# ── Internal network ──────────────────────────────────────────────────────────
+networks:
+  medlit-net:
+    driver: bridge

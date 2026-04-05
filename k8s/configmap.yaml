@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: medlit-config
+  namespace: medlit
+data:
+  OLLAMA_MODEL: "gemma3:1b"
+  OLLAMA_BASE_URL: "http://ollama:11434"
+  DATABASE_URL: "postgresql+asyncpg://medlit:medlit@postgres:5432/medlit"
+  LOG_LEVEL: "INFO"
+  DEBUG: "false"
