@@ -35,12 +35,15 @@ def build_context(context_chunks: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-async def generate(query: str, context_chunks: list[dict]) -> tuple[str, int, int]:
+async def generate(query: str, context_chunks: list[dict], model_override: str | None = None) -> tuple[str, int, int]:
     """
-    Send the prompt to Groq (Llama 3.1 70B) and return the answer.
+    Send the prompt to Groq and return the answer.
 
     No cold start, no GPU management — just an API call.
     Typical response time: 2-3 seconds.
+
+    Args:
+        model_override: if set, use this model instead of the default.
 
     Returns:
         (answer_text, tokens_in, tokens_out)
@@ -59,7 +62,7 @@ async def generate(query: str, context_chunks: list[dict]) -> tuple[str, int, in
     ]
 
     payload = {
-        "model": settings.llm_model,
+        "model": model_override or settings.llm_model,
         "messages": messages,
         "temperature": settings.temperature,
         "max_tokens": settings.max_new_tokens,

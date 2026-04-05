@@ -3,42 +3,37 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useChatStore } from "@/store/chatStore";
+import { useChatStore, AVAILABLE_MODELS } from "@/store/chatStore";
 import { submitQuery } from "@/lib/api";
 import { MessageBubble } from "./MessageBubble";
 import type { ChatMessage } from "@/lib/types";
 
-// Poll /api/v1/status to know if Ollama is warm or cold
-async function fetchOllamaStatus(): Promise<{ cold: boolean }> {
-  try {
-    const res = await fetch("/api/v1/status");
-    if (!res.ok) return { cold: false };
-    const data = await res.json();
-    return { cold: data.cold_start_warning };
-  } catch {
-    return { cold: false };
-  }
-}
-
 export function ChatWindow() {
   const [input, setInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isCold, setIsCold] = useState(false);   // true = Ollama is stopped, expect warm-up
-  const { messages, sessionId, addMessage, updateLastMessage } = useChatStore();
+  const {
+    messages,
+    sessionId,
+    selectedModel,
+    addMessage,
+    updateLastMessage,
+    clearMessages,
+    setModel,
+    loadFromStorage,
+  } = useChatStore();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Load chat history from localStorage on first render
+  useEffect(() => {
+    loadFromStorage();
+    setHydrated(true);
+  }, [loadFromStorage]);
 
   // Auto-scroll to the bottom when new messages arrive
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
-  // Poll Ollama status when the user starts typing so the warning is timely
-  useEffect(() => {
-    if (input.length === 1) {   // triggers on first keystroke only
-      fetchOllamaStatus().then(({ cold }) => setIsCold(cold));
-    }
-    if (input.length === 0) setIsCold(false);
-  }, [input]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,7 +52,7 @@ export function ChatWindow() {
     addMessage({ id: assistantId, role: "assistant", content: "", isLoading: true });
 
     try {
-      const response = await submitQuery(query, sessionId);
+      const response = await submitQuery(query, sessionId, selectedModel);
       updateLastMessage({
         content: response.answer,
         response,
@@ -74,8 +69,36 @@ export function ChatWindow() {
     }
   }
 
+  // Don't render messages until hydrated from localStorage (avoids mismatch)
+  if (!hydrated) return null;
+
   return (
     <div className="flex flex-col h-full">
+      {/* Model selector bar */}
+      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200">
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 font-medium">Model:</label>
+          <select
+            value={selectedModel}
+            onChange={(e) => setModel(e.target.value)}
+            className="text-xs border border-gray-300 rounded px-2 py-1 bg-white
+                       focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {AVAILABLE_MODELS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name} — {m.desc}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          onClick={clearMessages}
+          className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+        >
+          Clear chat
+        </button>
+      </div>
+
       {/* Message list */}
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
         {messages.length === 0 && (
@@ -85,6 +108,9 @@ export function ChatWindow() {
             <p className="text-sm max-w-md mx-auto">
               Ask questions about medical research. I search PubMed, CDC, WHO, FDA,
               and NIH to give you citation-grounded answers.
+            </p>
+            <p className="text-xs text-gray-300 mt-4">
+              Using {AVAILABLE_MODELS.find((m) => m.id === selectedModel)?.name || selectedModel}
             </p>
           </div>
         )}
@@ -98,18 +124,12 @@ export function ChatWindow() {
 
       {/* Input form */}
       <div className="border-t border-gray-200 bg-white px-4 py-3">
-        {/* Cold-start warning – shown as soon as user starts typing */}
-        {isCold && (
-          <p className="text-xs text-amber-600 mb-2 text-center">
-            ⏳ Model is idle — first response will take ~15s to warm up.
-          </p>
-        )}
         <form onSubmit={handleSubmit} className="flex gap-2">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask a medical literature question…"
+            placeholder="Ask a medical literature question..."
             disabled={isSubmitting}
             className="flex-1 border border-gray-300 rounded-full px-4 py-2 text-sm
                        focus:outline-none focus:ring-2 focus:ring-blue-500
@@ -122,7 +142,7 @@ export function ChatWindow() {
                        hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed
                        transition-colors"
           >
-            {isSubmitting ? "…" : "Send"}
+            {isSubmitting ? "..." : "Send"}
           </button>
         </form>
       </div>

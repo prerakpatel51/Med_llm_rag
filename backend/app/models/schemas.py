@@ -14,6 +14,8 @@ class QueryRequest(BaseModel):
                        description="Your medical literature question")
     session_id: str = Field(default="default",
                             description="Optional session ID for memory grouping")
+    model: Optional[str] = Field(default=None,
+                                 description="Override LLM model for this request")
 
 
 # ── Citation shown alongside the answer ──────────────────────────────────────

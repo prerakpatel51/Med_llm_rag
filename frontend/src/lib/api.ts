@@ -1,6 +1,4 @@
 // api.ts – typed wrappers around the FastAPI backend.
-// Query calls go directly to the backend (port 8000) to avoid Next.js proxy timeout.
-// All other calls use the /api proxy rewrite.
 
 import type { QueryResponse, MemoryEntry } from "./types";
 
@@ -9,17 +7,18 @@ const BACKEND_DIRECT = typeof window !== "undefined"
   ? (process.env.NEXT_PUBLIC_BACKEND_URL || `${window.location.protocol}//${window.location.hostname}:8000`)
   : "http://backend:8000";
 
-const BASE = "/api/v1";
-
 export async function submitQuery(
   query: string,
-  sessionId: string = "default"
+  sessionId: string = "default",
+  model?: string
 ): Promise<QueryResponse> {
-  // Use direct backend URL — bypasses Next.js proxy which has a short timeout
+  const body: Record<string, string> = { query, session_id: sessionId };
+  if (model) body.model = model;
+
   const res = await fetch(`${BACKEND_DIRECT}/api/v1/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, session_id: sessionId }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {

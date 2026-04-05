@@ -89,9 +89,10 @@ async def _pipeline(request: QueryRequest, db: AsyncSession, total_start: float)
     # ── Step 5: Generate ──────────────────────────────────────────────────────
     gen_start = time.perf_counter()
     try:
-        answer, tokens_in, tokens_out = await generate(query, top_chunks)
+        model_override = getattr(request, "model", None)
+        answer, tokens_in, tokens_out = await generate(query, top_chunks, model_override=model_override)
     except Exception as e:
-        metrics.errors_total.labels(error_type="ollama_timeout").inc()
+        metrics.errors_total.labels(error_type="generation_error").inc()
         raise RuntimeError(f"LLM generation failed: {e}") from e
 
     generation_latency = time.perf_counter() - gen_start
