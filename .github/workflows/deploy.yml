@@ -153,6 +153,20 @@ jobs:
           DISTRIBUTION_ID: ${{ secrets.CLOUDFRONT_DISTRIBUTION }}
           EC2_HOST: ${{ secrets.EC2_HOST }}
         run: |
+          if [[ "$EC2_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            ORIGIN_HOST=$(aws ec2 describe-instances \
+              --filters "Name=ip-address,Values=$EC2_HOST" \
+              --query 'Reservations[0].Instances[0].PublicDnsName' \
+              --output text)
+          else
+            ORIGIN_HOST="$EC2_HOST"
+          fi
+
+          if [[ -z "$ORIGIN_HOST" || "$ORIGIN_HOST" == "None" ]]; then
+            echo "Unable to resolve a public DNS name for EC2_HOST=$EC2_HOST"
+            exit 1
+          fi
+
           ETAG=$(aws cloudfront get-distribution-config \
             --id "$DISTRIBUTION_ID" \
             --query 'ETag' \
@@ -164,8 +178,8 @@ jobs:
             --output json > /tmp/cf-config.json
 
           jq \
-            --arg ec2_host "$EC2_HOST" \
-            --arg ec2_origin_id "EC2-$EC2_HOST" \
+            --arg ec2_host "$ORIGIN_HOST" \
+            --arg ec2_origin_id "EC2-$ORIGIN_HOST" \
             '
             def write_behavior($path):
               {
@@ -206,6 +220,7 @@ jobs:
               + [{
                   Id: $ec2_origin_id,
                   DomainName: $ec2_host,
+                  OriginPath: "",
                   CustomHeaders: {Quantity: 0},
                   CustomOriginConfig: {
                     HTTPPort: 8000,
@@ -219,7 +234,9 @@ jobs:
                     OriginKeepaliveTimeout: 5
                   },
                   ConnectionAttempts: 3,
-                  ConnectionTimeout: 10
+                  ConnectionTimeout: 10,
+                  OriginShield: {Enabled: false},
+                  OriginAccessControlId: ""
                 }]
             )
             | .Origins.Quantity = (.Origins.Items | length)

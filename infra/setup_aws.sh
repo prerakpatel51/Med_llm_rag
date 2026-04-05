@@ -167,8 +167,15 @@ if [ ! -z "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
     --query 'Reservations[0].Instances[0].PublicIpAddress' \
     --output text)
 
+  EC2_DNS=$(aws ec2 describe-instances \
+    --region $REGION \
+    --instance-ids $INSTANCE_ID \
+    --query 'Reservations[0].Instances[0].PublicDnsName' \
+    --output text)
+
   echo "  Instance ID: $INSTANCE_ID"
   echo "  Public IP: $EC2_IP"
+  echo "  Public DNS: $EC2_DNS"
 fi
 
 # ── 6. CloudFront distribution with backend routing ──────────────────────────
@@ -178,8 +185,8 @@ echo "[6/6] Creating CloudFront distribution..."
 CF_ID=""
 CF_DOMAIN=""
 
-if [ -z "$EC2_IP" ] || [ "$EC2_IP" = "None" ]; then
-  echo "  Skipping CloudFront creation because no EC2 public IP was found."
+if [ -z "$EC2_DNS" ] || [ "$EC2_DNS" = "None" ]; then
+  echo "  Skipping CloudFront creation because no EC2 public DNS was found."
   echo "  Re-run this step after the backend instance exists."
 else
   CF_CONFIG=$(cat <<EOF
@@ -197,8 +204,9 @@ else
         }
       },
       {
-        "Id": "EC2-$EC2_IP",
-        "DomainName": "$EC2_IP",
+        "Id": "EC2-$EC2_DNS",
+        "DomainName": "$EC2_DNS",
+        "OriginPath": "",
         "CustomOriginConfig": {
           "HTTPPort": 8000,
           "HTTPSPort": 443,
@@ -207,7 +215,11 @@ else
             "Quantity": 1,
             "Items": ["TLSv1.2"]
           }
-        }
+        },
+        "OriginShield": {
+          "Enabled": false
+        },
+        "OriginAccessControlId": ""
       }
     ]
   },
@@ -222,7 +234,7 @@ else
     "Items": [
       {
         "PathPattern": "/api/*",
-        "TargetOriginId": "EC2-$EC2_IP",
+        "TargetOriginId": "EC2-$EC2_DNS",
         "ViewerProtocolPolicy": "redirect-to-https",
         "AllowedMethods": {
           "Quantity": 7,
@@ -238,7 +250,7 @@ else
       },
       {
         "PathPattern": "/health",
-        "TargetOriginId": "EC2-$EC2_IP",
+        "TargetOriginId": "EC2-$EC2_DNS",
         "ViewerProtocolPolicy": "redirect-to-https",
         "AllowedMethods": {
           "Quantity": 2,
@@ -254,7 +266,7 @@ else
       },
       {
         "PathPattern": "/metrics",
-        "TargetOriginId": "EC2-$EC2_IP",
+        "TargetOriginId": "EC2-$EC2_DNS",
         "ViewerProtocolPolicy": "redirect-to-https",
         "AllowedMethods": {
           "Quantity": 2,
