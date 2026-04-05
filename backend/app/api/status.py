@@ -14,5 +14,5 @@ async def status():
         "ollama_running": True,      # Groq is always available
         "cold_start_warning": False,  # no cold start with Groq
         "provider": "groq",
-        "model": "llama-3.1-70b-versatile",
+        "model": "llama-3.3-70b-versatile",
     }

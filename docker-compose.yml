@@ -58,7 +58,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-medlit}:${POSTGRES_PASSWORD:-medlit}@postgres:5432/${POSTGRES_DB:-medlit}
       GROQ_API_KEY: ${GROQ_API_KEY}
-      LLM_MODEL: ${LLM_MODEL:-llama-3.1-70b-versatile}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
     volumes:
       # Cache the embedding model so it only downloads once
       - hf_cache:/app/hf-cache
