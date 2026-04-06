@@ -1,264 +1,33 @@
 # Medical Literature Assistant
 
-A low-cost, retrieval-augmented medical literature assistant that runs on a single EC2 instance (or your local machine). It searches PubMed, CDC, WHO, FDA, and NIH to give you citation-grounded answers using **Gemma 3 1B** — a tiny open-source LLM that runs entirely on CPU.
+Medical Literature Assistant is a retrieval-augmented research app for grounded medical Q&A. It combines a FastAPI backend, a Next.js frontend, PostgreSQL with `pgvector`, session-scoped PDF uploads, topic-based PubMed ingestion, and Groq-hosted generation.
 
-> ⚕️ **Research use only.** This tool summarizes published literature. It is not a substitute for professional medical advice, diagnosis, or treatment.
+This repository currently supports two practical modes:
 
-## Product capabilities
+- local development with Docker Compose
+- AWS deployment with `S3 + CloudFront` for the frontend and a scalable backend path of `CloudFront -> ALB -> Auto Scaling Group -> RDS`
 
-- Ask questions against the shared literature database and your session-scoped uploaded PDFs in one query.
-- Upload up to **5 PDF files** per batch with a **40 MB combined size limit**.
-- Ingest a user-provided topic from **PubMed only** or from **all supported sources** before asking follow-up questions.
-- Every answer returns a direct answer, a short summary, and the source list used to ground the response.
-- Topic-ingested sources appear in the UI immediately so users can review what was added before querying.
+This project is for literature research and education. It is not a diagnosis or treatment tool.
 
----
+## What The App Does
 
-## Architecture
+- Answers questions using retrieved evidence from the indexed database and uploaded PDFs.
+- Lets users upload up to `5` PDFs per batch with a combined limit of `40 MB`.
+- Lets users ingest a topic from `PubMed` or from `all` configured sources before asking follow-up questions.
+- Returns:
+  - a direct answer
+  - a short summary
+  - a source list
+  - evidence passages with trust tiers
+- Stores conversation history per session for the history page.
 
-```
-User Query
-    │
-    ▼
-[FastAPI Backend]
-    │
-    ├── [Safety pre-filter] – blocks personal diagnosis requests
-    │
-    ├── [Query embedding]   – all-MiniLM-L6-v2 (22 MB, CPU, 384-dim)
-    │
-    ├── [Memory lookup]     – find similar past queries in pgvector
-    │
-    ├── [Dual retrieval]
-    │     ├── Semantic search  – pgvector cosine ANN
-    │     └── Full-text search – PostgreSQL tsvector (BM25-style)
-    │
-    ├── [Reciprocal Rank Fusion] – merge both result lists
-    │
-    ├── [Re-ranking] – 70% RRF score + 30% trust score + memory boost
-    │
-    ├── [Gemma 3 1B via Ollama] – evidence-only generation
-    │
-    ├── [Judge] – checks every sentence is grounded in retrieved evidence
-    │
-    └── [Response] – answer + numbered citations + trust tier badges
-```
+## Current Production Links
 
-### Key design choices
-
-| Decision | Why |
-|---|---|
-| **Gemma 3 1B** | Runs on CPU, <800 MB RAM in Q4_K_M quantization |
-| **all-MiniLM-L6-v2** | 22 MB, 384-dim, fast CPU inference, no API cost |
-| **Retrieval-first** | LLM never generates from memory alone |
-| **Dual retrieval + RRF** | Semantic search finds related concepts; BM25 finds exact terms |
-| **Trust scoring** | Source authority + publication type + recency + citations |
-| **Stateless judge** | Regex + embedding similarity — no extra LLM call, zero cost |
-| **Docker Compose** | Runs on a single node, all services wired together |
-
-### Trust tiers
-
-| Tier | Score | Examples |
-|---|---|---|
-| **A** (green) | ≥ 0.80 | CDC, WHO, FDA guidelines; PubMed RCTs |
-| **B** (amber) | 0.60–0.79 | PubMed reviews, PMC articles |
-| **C** (red) | < 0.60 | Preprints, unknown publication type |
-
----
-
-## Services
-
-| Service | Port | Description |
-|---|---|---|
-| Frontend | 3000 | Next.js chat UI |
-| Backend | 8000 | FastAPI (+ Swagger at `/docs`) |
-| PostgreSQL | 5432 | Database + pgvector |
-
----
-
-## Local deployment
-
-### Prerequisites
-
-- Docker ≥ 24 and Docker Compose v2
-- 6 GB free disk (model weights + database)
-- 4 GB RAM minimum (8 GB recommended)
-
-### Step 1 – Clone and configure
-
-```bash
-git clone <repo-url> medical-lit-assistant
-cd medical-lit-assistant
-
-# Copy the example env file and edit if needed
-cp .env.example .env
-# Optional: add your free NCBI API key for higher PubMed rate limits
-# Get one at: https://www.ncbi.nlm.nih.gov/account/
-```
-
-### Step 2 – Start everything
-
-```bash
-# First-time setup (builds images, starts containers, waits for health)
-bash scripts/setup.sh
-
-# Or manually:
-docker compose up -d
-```
-
-Gemma 3 1B (~800 MB) downloads automatically on first start. This takes 1–3 minutes depending on your internet connection.
-
-### Step 3 – Open the app
-
-| URL | What |
-|---|---|
-| http://localhost:3000 | Chat interface |
-| http://localhost:8000/docs | Interactive API docs |
-
-### Useful commands
-
-```bash
-make logs          # follow all logs
-make logs-backend  # follow backend only
-make health        # check /health and /ready
-make psql          # connect to PostgreSQL
-make shell-backend # bash inside the backend container
-make down          # stop (data preserved)
-make down-volumes  # stop AND delete all data
-```
-
----
-
-## AWS deployment (single EC2 instance)
-
-### Recommended instance
-
-| Use case | Instance | Notes |
-|---|---|---|
-| Development / light traffic | t3.medium (4 GB RAM) | Use Q4_0 quantization for Ollama |
-| Production | t3.large (8 GB RAM) | Comfortable headroom |
-
-### Step 1 – Launch EC2
-
-1. Go to EC2 → Launch Instance
-2. Choose **Ubuntu 24.04 LTS**
-3. Instance type: **t3.large**
-4. Storage: **30 GB gp3** (default 8 GB is too small)
-5. Security group — open inbound:
-   - Port 22 (SSH)
-   - Port 3000 (frontend)
-   - Port 8000 (backend API, optional)
-
-### Step 2 – Install Docker
-
-```bash
-# SSH into your instance
-ssh -i your-key.pem ubuntu@<EC2-PUBLIC-IP>
-
-# Install Docker
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker ubuntu
-newgrp docker
-
-# Verify
-docker --version
-docker compose version
-```
-
-### Step 3 – Deploy the app
-
-```bash
-# Copy the project to EC2 (from your local machine)
-scp -i your-key.pem -r medical-lit-assistant ubuntu@<EC2-PUBLIC-IP>:~/
-
-# On the EC2 instance
-cd ~/medical-lit-assistant
-cp .env.example .env
-# Edit .env: set strong passwords and your NCBI API key
-nano .env
-
-bash scripts/setup.sh
-```
-
-### Step 4 – (Optional) Add a domain + HTTPS with Nginx
-
-```bash
-sudo apt install -y nginx certbot python3-certbot-nginx
-
-# Create Nginx config
-sudo tee /etc/nginx/sites-available/medlit > /dev/null <<'EOF'
-server {
-    server_name your-domain.com;
-
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    location /api {
-        proxy_pass http://localhost:8000;
-        proxy_read_timeout 120s;
-    }
-
-}
-EOF
-
-sudo ln -s /etc/nginx/sites-available/medlit /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-
-# Get a free TLS certificate
-sudo certbot --nginx -d your-domain.com
-```
-
-If you serve the frontend from `https://` (for example S3 + CloudFront), do not point the browser directly at `http://<EC2-IP>:8000`. Modern browsers will block that as mixed content or fail the network request. Route `/api` and `/health` through the same HTTPS domain, or put the backend behind its own HTTPS endpoint.
-
-### Estimated AWS cost
-
-| Resource | Cost |
-|---|---|
-| t3.large on-demand | ~$0.08/hr (~$60/month) |
-| 30 GB gp3 EBS | ~$2.40/month |
-| Data transfer | Minimal for personal use |
-| **Total** | **~$62/month** |
-
-To reduce cost: stop the instance when not in use, or use a t3.medium (~$30/month) with reduced Ollama memory limits.
-
-## Cheapest Correct Scalable Architecture
-
-If you want to keep **one EC2 instance normally** and scale out only when user traffic increases, the low-cost production-safe target architecture is:
-
-- `S3 + CloudFront` for the frontend
-- `CloudFront /api/* -> ALB`
-- `ALB -> Auto Scaling Group of backend-only EC2 instances`
-- `RDS PostgreSQL` shared by all backend instances
-- optional observability added separately later, if needed
-
-### Why this change is required
-
-- The old `docker-compose.prod.yml` layout bundled too many services on one box.
-- Adding another backend container on the same instance does **not** solve memory pressure if memory is already high.
-- Multiple EC2 instances require a **shared database** and a **load balancer** or traffic will still hit only one server.
-
-### Practical order for scaling
-
-1. Create `RDS PostgreSQL`.
-2. Split the backend out from the all-in-one EC2 compose layout.
-3. Create an `ALB` and backend target group.
-4. Create a launch template and `Auto Scaling Group`.
-5. Update CloudFront `/api/*` to point to the ALB.
-6. Add a scaling policy, typically CPU first and memory second.
-
-## Live URLs
-
-Current production links:
-
-| URL | Purpose |
-|---|---|
-| https://d3jhehgg6t7to2.cloudfront.net | Main site |
-| https://d3jhehgg6t7to2.cloudfront.net/history/ | History page |
-| https://d3jhehgg6t7to2.cloudfront.net/health | Public health check through CloudFront |
-| https://d3jhehgg6t7to2.cloudfront.net/api/v1/ | API base through CloudFront |
-| http://med-llm-rag-backend-alb-202945636.us-east-1.elb.amazonaws.com/health | Direct ALB health check |
+- Main site: `https://d3jhehgg6t7to2.cloudfront.net`
+- History page: `https://d3jhehgg6t7to2.cloudfront.net/history/`
+- Health check: `https://d3jhehgg6t7to2.cloudfront.net/health`
+- API base: `https://d3jhehgg6t7to2.cloudfront.net/api/v1/`
+- Direct ALB health check: `http://med-llm-rag-backend-alb-202945636.us-east-1.elb.amazonaws.com/health`
 
 CloudFront details:
 
@@ -266,7 +35,7 @@ CloudFront details:
 - CloudFront domain: `d3jhehgg6t7to2.cloudfront.net`
 - Custom domain: not configured
 
-If you need to look the site URL up later, run:
+If you need to look up the site URL later:
 
 ```bash
 aws cloudfront list-distributions \
@@ -274,120 +43,286 @@ aws cloudfront list-distributions \
   --output table
 ```
 
-### Recommended autoscaling settings
+## Architecture
+
+### Local Development
+
+Local development uses:
+
+- `frontend`: Next.js
+- `backend`: FastAPI
+- `postgres`: PostgreSQL 16 with `pgvector`
+
+Local Compose file:
+
+- [docker-compose.yml](/Users/prerak/Desktop/pk/docker-compose.yml)
+
+### Current Production
+
+Current production uses:
+
+- `S3 + CloudFront` for static frontend hosting
+- `CloudFront` path routing for `/api/*` and `/health`
+- `Application Load Balancer`
+- `Auto Scaling Group` for backend EC2 instances
+- `RDS PostgreSQL`
+
+The live production path is:
+
+`CloudFront -> ALB -> ASG backend -> RDS`
+
+The old self-hosted Grafana/Prometheus stack is no longer part of the active deployment or this repository.
+
+## Core Stack
+
+- Backend: FastAPI
+- Frontend: Next.js App Router
+- Database: PostgreSQL 16 + `pgvector`
+- Embeddings: `sentence-transformers/all-MiniLM-L6-v2`
+- Generation: Groq API, default model `llama-3.3-70b-versatile`
+- Scheduler: APScheduler
+- Infra: AWS CloudFront, ALB, Auto Scaling Group, RDS, ECR, S3
+
+## Main Features
+
+- Grounded question answering over stored medical literature
+- Session-scoped PDF upload retrieval
+- Topic-specific ingestion via `POST /api/v1/ingest/topic`
+- Stored session memory for the history page
+- Short summary plus evidence-backed answer format
+- Health and readiness endpoints for deployment checks
+
+## Local Setup
+
+### Requirements
+
+- Docker
+- Docker Compose v2
+- A Groq API key
+
+Optional but recommended:
+
+- NCBI API key
+- NCBI email
+
+### 1. Create The Environment File
+
+```bash
+cp .env.example .env
+```
+
+Set at least:
+
+- `GROQ_API_KEY`
+- `SECRET_KEY`
+
+Optional but useful:
+
+- `NCBI_API_KEY`
+- `NCBI_EMAIL`
+
+Reference file:
+
+- [.env.example](/Users/prerak/Desktop/pk/.env.example)
+
+### 2. Start The App
+
+```bash
+bash scripts/setup.sh
+```
+
+That script:
+
+- creates `.env` if missing
+- builds the Docker images
+- starts the local stack
+- waits for the backend to answer `/health`
+
+Script:
+
+- [setup.sh](/Users/prerak/Desktop/pk/scripts/setup.sh)
+
+### 3. Open The App
+
+- App: `http://localhost:3000`
+- API docs: `http://localhost:8000/docs`
+- Health: `http://localhost:8000/health`
+- Ready: `http://localhost:8000/ready`
+
+### 4. Run A Health Check
+
+```bash
+bash scripts/health_check.sh
+```
+
+Script:
+
+- [health_check.sh](/Users/prerak/Desktop/pk/scripts/health_check.sh)
+
+## Local Services And Ports
+
+- Frontend: `3000`
+- Backend: `8000`
+- PostgreSQL: `5432`
+
+## Environment Variables
+
+Key backend settings live in:
+
+- [config.py](/Users/prerak/Desktop/pk/backend/app/config.py)
+
+Important env vars:
+
+- `DATABASE_URL`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_DB`
+- `GROQ_API_KEY`
+- `LLM_MODEL`
+- `NCBI_API_KEY`
+- `NCBI_EMAIL`
+- `SECRET_KEY`
+- `DEBUG`
+- `LOG_LEVEL`
+
+Runtime limits currently enforced by config:
+
+- max query length: `1000`
+- max PDF upload files: `5`
+- max PDF upload size: `40 MB`
+
+## API Surface
+
+Key routes:
+
+- `GET /health`
+- `GET /ready`
+- `POST /api/v1/query`
+- `GET /api/v1/memory`
+- `POST /api/v1/ingest`
+- `POST /api/v1/ingest/topic`
+- `POST /api/v1/uploads/pdfs`
+
+Relevant backend files:
+
+- [main.py](/Users/prerak/Desktop/pk/backend/app/main.py)
+- [query.py](/Users/prerak/Desktop/pk/backend/app/api/query.py)
+- [memory.py](/Users/prerak/Desktop/pk/backend/app/api/memory.py)
+- [ingest.py](/Users/prerak/Desktop/pk/backend/app/api/ingest.py)
+- [uploads.py](/Users/prerak/Desktop/pk/backend/app/api/uploads.py)
+- [schemas.py](/Users/prerak/Desktop/pk/backend/app/models/schemas.py)
+
+## Frontend Behavior
+
+The frontend uses same-origin API paths in the browser so CloudFront can front both static content and backend routes without mixed-content issues.
+
+Relevant frontend files:
+
+- [api.ts](/Users/prerak/Desktop/pk/frontend/src/lib/api.ts)
+- [types.ts](/Users/prerak/Desktop/pk/frontend/src/lib/types.ts)
+- [ChatWindow.tsx](/Users/prerak/Desktop/pk/frontend/src/components/chat/ChatWindow.tsx)
+
+User-facing pages:
+
+- `/`
+- `/history/`
+
+## Deployment
+
+The GitHub Actions workflow deploys on every push to `main`.
+
+Workflow:
+
+- [deploy.yml](/Users/prerak/Desktop/pk/.github/workflows/deploy.yml)
+
+What it does:
+
+1. runs backend tests if a `backend/tests` directory exists
+2. builds and pushes the backend Docker image to ECR
+3. builds the static frontend
+4. uploads the frontend to S3
+5. ensures CloudFront routes `/api/*` and `/health`
+6. refreshes the backend Auto Scaling Group, or falls back to the legacy single-EC2 path if no ASG is found
+7. invalidates CloudFront
+
+Required GitHub secrets:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `EC2_HOST`
+- `EC2_SSH_KEY`
+- `EC2_USER`
+- `S3_BUCKET`
+- `CLOUDFRONT_DISTRIBUTION`
+- `DB_PASSWORD`
+- `SECRET_KEY`
+- `NCBI_API_KEY`
+- `NCBI_EMAIL`
+
+## AWS Notes
+
+### Cheapest Correct Scalable Setup
+
+If you want one backend instance normally and a second only during higher load, the practical architecture is:
+
+- `S3 + CloudFront` for frontend
+- `CloudFront /api/* -> ALB`
+- `ALB -> Auto Scaling Group`
+- `RDS PostgreSQL`
+
+Recommended ASG settings:
 
 - `min = 1`
 - `desired = 1`
 - `max = 2`
 
-That keeps one instance running normally and launches a second backend instance only when the scaling threshold is crossed.
+### Current Infra Helpers
 
----
+Relevant infra files:
 
-## Kubernetes deployment (portfolio/demo)
+- [setup_aws.sh](/Users/prerak/Desktop/pk/infra/setup_aws.sh)
+- [create_iam_user.sh](/Users/prerak/Desktop/pk/infra/create_iam_user.sh)
+- [provision_scalable_backend.sh](/Users/prerak/Desktop/pk/infra/provision_scalable_backend.sh)
+- [migrate_postgres_to_rds.sh](/Users/prerak/Desktop/pk/infra/migrate_postgres_to_rds.sh)
+- [backend-compose.yml](/Users/prerak/Desktop/pk/infra/backend-compose.yml)
 
-The `k8s/` directory contains plain YAML manifests. Apply them in order:
+## Kubernetes
 
-```bash
-# 1. Create namespace
-kubectl apply -f k8s/namespace.yaml
+The `k8s/` directory still exists as a secondary/demo deployment path. It is not the primary production path.
 
-# 2. Create config and secrets (edit secrets.yaml first!)
-kubectl apply -f k8s/configmap.yaml
-kubectl apply -f k8s/secrets.yaml
+## Repo Structure
 
-# 3. Database
-kubectl apply -f k8s/postgres/
-
-# 4. Ollama (LLM server)
-kubectl apply -f k8s/ollama/
-
-# 5. Backend and frontend
-kubectl apply -f k8s/backend/
-kubectl apply -f k8s/frontend/
-
-# 6. Ingress (edit hostname in ingress.yaml first)
-kubectl apply -f k8s/ingress/
-```
-
-> Note: The k8s manifests are for portfolio demonstration. The Docker Compose setup is the optimized primary deployment target.
-
----
-
-## Project structure
-
-```
-medical-lit-assistant/
+```text
+pk/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py               # FastAPI app, startup/shutdown
-│   │   ├── config.py             # All settings (from env vars)
 │   │   ├── api/
-│   │   │   ├── health.py         # /health, /ready
-│   │   │   ├── query.py          # POST /api/v1/query
-│   │   │   ├── ingest.py         # topic ingestion + background seeding
-│   │   │   ├── uploads.py        # PDF upload ingestion
-│   │   │   └── memory.py         # GET /api/v1/memory
 │   │   ├── core/
-│   │   │   ├── pipeline.py       # Main RAG orchestrator ← start here
-│   │   │   ├── generation.py     # Ollama client
-│   │   │   └── judge.py          # Safety + claim grounding
 │   │   ├── ingestion/
-│   │   │   ├── coordinator.py    # Orchestrates all fetchers
-│   │   │   ├── chunker.py        # Text splitting
-│   │   │   ├── embedder.py       # all-MiniLM-L6-v2
-│   │   │   └── sources/          # PubMed, CDC, WHO, FDA
 │   │   ├── models/
-│   │   │   ├── database.py       # SQLAlchemy async engine
-│   │   │   ├── schemas.py        # Pydantic request/response
-│   │   │   └── orm/              # ORM table definitions
 │   │   └── services/
-│   │       ├── vector_store.py   # pgvector search + RRF
-│   │       ├── memory_service.py # Conversation memory
-│   │       ├── pdf_ingestion.py  # session-scoped PDF extraction + storage
-│   │       └── trust_scorer.py   # Trust score computation
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── app/                  # Next.js App Router pages
-│   │   ├── components/chat/      # Chat UI components
-│   │   ├── lib/                  # API client, TypeScript types
-│   │   └── store/                # Zustand chat state
-│   ├── Dockerfile
-│   └── package.json
-├── k8s/                          # Kubernetes manifests (portfolio)
-├── scripts/                      # setup.sh, health_check.sh
-├── docker-compose.yml            # Primary deployment
-├── Makefile                      # Convenience targets
-└── .env.example                  # Configuration template
+│   │   ├── app/
+│   │   ├── components/
+│   │   ├── lib/
+│   │   └── store/
+│   └── Dockerfile
+├── infra/
+├── k8s/
+├── scripts/
+├── docker-compose.yml
+├── docker-compose.prod.yml
+└── .github/workflows/deploy.yml
 ```
 
----
+## Operational Notes
 
-## Safety design
-
-The system has two safety layers:
-
-**1. Pre-generation filter** (in `core/judge.py`)
-- Blocks personal diagnosis requests ("do I have...", "am I sick...")
-- Blocks treatment prescription requests ("should I take...")
-- Blocks out-of-scope queries (legal, financial)
-- Uses regex — no LLM call, zero latency overhead
-
-**2. Post-generation claim validator** (in `core/judge.py`)
-- Embeds each sentence in the answer
-- Computes cosine similarity against the retrieved chunks
-- Flags sentences with similarity < 0.35 as "potentially unsupported"
-- Adds a warning banner in the UI if flagged
-
----
-
-## Adding new medical sources
-
-1. Create a new file in `backend/app/ingestion/sources/`
-2. Subclass `BaseFetcher` and implement `fetch(query, max_results)`
-3. Return a list of dicts matching the schema in `base.py`
-4. Import and add your fetcher to the `fetchers` list in `coordinator.py`
-
-The trust scorer automatically assigns appropriate scores based on the `source` field you return.
+- The backend warms the embedding model in the background after startup.
+- `/health` is a liveness check.
+- `/ready` verifies database access and embedding model readiness.
+- Uploaded PDFs are scoped to the current session.
+- The frontend history page reads from `GET /api/v1/memory`.
+- There is no custom domain configured right now.

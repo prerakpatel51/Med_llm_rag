@@ -10,7 +10,3 @@ curl -sf "${BASE_URL}:8000/health" | python3 -m json.tool
 echo ""
 echo "Checking /ready   …"
 curl -sf "${BASE_URL}:8000/ready" | python3 -m json.tool
-
-echo ""
-echo "Checking /metrics  (first 5 lines)…"
-curl -sf "${BASE_URL}:8000/metrics" | head -5
