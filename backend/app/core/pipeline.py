@@ -16,18 +16,13 @@ from app.services.memory_service import find_similar_memories, save_memory
 from app.services.trust_scorer import trust_tier
 from app.core.judge import check_query, check_answer
 from app.core.generation import generate
-import app.services.metrics_service as metrics
 
 settings = get_settings()
 
 
 async def run_pipeline(request: QueryRequest, db: AsyncSession) -> QueryResponse:
     total_start = time.perf_counter()
-    metrics.active_requests.inc()
-    try:
-        return await _pipeline(request, db, total_start)
-    finally:
-        metrics.active_requests.dec()
+    return await _pipeline(request, db, total_start)
 
 
 async def _pipeline(request: QueryRequest, db: AsyncSession, total_start: float) -> QueryResponse:
@@ -37,7 +32,6 @@ async def _pipeline(request: QueryRequest, db: AsyncSession, total_start: float)
     # ── Step 1: Safety pre-filter ─────────────────────────────────────────────
     is_safe, block_reason = check_query(query)
     if not is_safe:
-        metrics.errors_total.labels(error_type="judge_block").inc()
         return QueryResponse(
             answer=block_reason,
             citations=[],
@@ -87,7 +81,6 @@ async def _pipeline(request: QueryRequest, db: AsyncSession, total_start: float)
     top_chunks = await _enrich_chunks(db, top_chunks)
 
     retrieval_latency = time.perf_counter() - retrieval_start
-    metrics.retrieval_latency.observe(retrieval_latency)
 
     if not top_chunks:
         return QueryResponse(
@@ -106,13 +99,9 @@ async def _pipeline(request: QueryRequest, db: AsyncSession, total_start: float)
         model_override = getattr(request, "model", None)
         answer, tokens_in, tokens_out = await generate(query, top_chunks, model_override=model_override)
     except Exception as e:
-        metrics.errors_total.labels(error_type="generation_error").inc()
         raise RuntimeError(f"LLM generation failed: {e}") from e
 
     generation_latency = time.perf_counter() - gen_start
-    metrics.generation_latency.observe(generation_latency)
-    metrics.tokens_in_total.inc(tokens_in)
-    metrics.tokens_out_total.inc(tokens_out)
 
     # ── Step 6: Judge ─────────────────────────────────────────────────────────
     judge_flagged, judge_notes = False, ""
@@ -124,10 +113,6 @@ async def _pipeline(request: QueryRequest, db: AsyncSession, total_start: float)
 
     # ── Step 8: Metrics ───────────────────────────────────────────────────────
     total_latency = time.perf_counter() - total_start
-    metrics.request_latency.observe(total_latency)
-    metrics.requests_total.labels(status="success").inc()
-    top_source = top_chunks[0]["source"] if top_chunks else "unknown"
-    metrics.topic_queries_total.labels(topic=top_source).inc()
 
     # ── Step 9: Save memory in background with its OWN session ───────────────
     chunk_ids = [c["id"] for c in top_chunks]

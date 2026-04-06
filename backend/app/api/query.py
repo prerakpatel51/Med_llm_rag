@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.schemas import QueryRequest, QueryResponse
 from app.models.database import get_db
 from app.core.pipeline import run_pipeline
-import app.services.metrics_service as metrics
 
 router = APIRouter()
 
@@ -34,8 +33,6 @@ async def query(
         response = await run_pipeline(request, db)
         return response
     except RuntimeError as e:
-        metrics.errors_total.labels(error_type="pipeline_error").inc()
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        metrics.errors_total.labels(error_type="internal_error").inc()
         raise HTTPException(status_code=500, detail="Internal server error")

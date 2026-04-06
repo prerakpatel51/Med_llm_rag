@@ -24,9 +24,6 @@ sentence-transformers==3.1.1
 # Scheduling (background ingestion jobs)
 apscheduler==3.10.4
 
-# Monitoring
-prometheus-client==0.21.0
-
 # Utilities
 python-multipart==0.0.12   # for form data (future use)
 pypdf==5.4.0

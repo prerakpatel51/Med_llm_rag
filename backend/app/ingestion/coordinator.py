@@ -23,7 +23,6 @@ from app.ingestion.sources.fda import FDAFetcher
 from app.ingestion.chunker import make_chunks_for_document
 from app.ingestion.embedder import embed_batch
 from app.services.trust_scorer import compute_trust_score
-from app.services.metrics_service import documents_ingested_total
 
 # Medical topics we seed the knowledge base with
 DEFAULT_TOPICS = [
@@ -510,8 +509,5 @@ async def _store_document(db: AsyncSession, doc_data: dict) -> bool:
     # Save to database
     from app.services.vector_store import save_chunks
     await save_chunks(db, chunks)
-
-    # Update Prometheus gauge
-    documents_ingested_total.labels(source=doc_data["source"]).inc()
 
     return True

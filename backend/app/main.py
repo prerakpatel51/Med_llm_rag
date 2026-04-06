@@ -13,7 +13,7 @@ from app.ingestion.embedder import load_model
 # Import ORM models so SQLAlchemy sees them before create_all()
 from app.models.orm import document, chunk, query_log, memory  # noqa: F401
 
-from app.api import health, metrics, query, memory as memory_api, status, ingest, uploads
+from app.api import health, query, memory as memory_api, status, ingest, uploads
 
 settings = get_settings()
 scheduler = AsyncIOScheduler()
@@ -83,7 +83,6 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
-app.include_router(metrics.router)
 app.include_router(query.router)
 app.include_router(memory_api.router)
 app.include_router(status.router)

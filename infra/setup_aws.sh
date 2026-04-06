@@ -77,8 +77,8 @@ SG_ID=$(aws ec2 create-security-group \
     --filters "Name=group-name,Values=$APP_NAME-sg" \
     --query 'SecurityGroups[0].GroupId' --output text)
 
-# Allow SSH, HTTP, HTTPS, backend port, Grafana
-for PORT in 22 80 443 8000 3001 9090; do
+# Allow SSH, HTTP, HTTPS, and backend port
+for PORT in 22 80 443 8000; do
   aws ec2 authorize-security-group-ingress \
     --region $REGION \
     --group-id $SG_ID \
@@ -230,7 +230,7 @@ else
     "Compress": true
   },
   "CacheBehaviors": {
-    "Quantity": 3,
+    "Quantity": 2,
     "Items": [
       {
         "PathPattern": "/api/*",
@@ -264,22 +264,6 @@ else
         "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
         "Compress": true
       },
-      {
-        "PathPattern": "/metrics",
-        "TargetOriginId": "EC2-$EC2_DNS",
-        "ViewerProtocolPolicy": "redirect-to-https",
-        "AllowedMethods": {
-          "Quantity": 2,
-          "Items": ["GET", "HEAD"],
-          "CachedMethods": {
-            "Quantity": 2,
-            "Items": ["GET", "HEAD"]
-          }
-        },
-        "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
-        "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
-        "Compress": true
-      }
     ]
   },
   "DefaultRootObject": "index.html",
@@ -329,7 +313,6 @@ echo "DB_PASSWORD:             (choose a strong password)"
 echo "SECRET_KEY:              (run: openssl rand -hex 32)"
 echo "NCBI_API_KEY:            (your NCBI key)"
 echo "NCBI_EMAIL:              (your email)"
-echo "GF_ADMIN_PASSWORD:       (choose a password)"
 echo ""
 echo "Next: Copy docker-compose.prod.yml to EC2:"
 echo "  scp -i ~/.ssh/$KEY_NAME.pem docker-compose.prod.yml ubuntu@$EC2_IP:~/app/"

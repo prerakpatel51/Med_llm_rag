@@ -71,10 +71,7 @@ User Query
 |---|---|---|
 | Frontend | 3000 | Next.js chat UI |
 | Backend | 8000 | FastAPI (+ Swagger at `/docs`) |
-| Grafana | 3001 | Metrics dashboards |
-| Prometheus | 9090 | Metrics storage |
 | PostgreSQL | 5432 | Database + pgvector |
-| Ollama | 11434 | LLM server |
 
 ---
 
@@ -116,8 +113,6 @@ Gemma 3 1B (~800 MB) downloads automatically on first start. This takes 1–3 mi
 |---|---|
 | http://localhost:3000 | Chat interface |
 | http://localhost:8000/docs | Interactive API docs |
-| http://localhost:3001 | Grafana (admin / check .env) |
-| http://localhost:9090 | Prometheus |
 
 ### Useful commands
 
@@ -152,7 +147,6 @@ make down-volumes  # stop AND delete all data
    - Port 22 (SSH)
    - Port 3000 (frontend)
    - Port 8000 (backend API, optional)
-   - Port 3001 (Grafana, optional)
 
 ### Step 2 – Install Docker
 
@@ -206,9 +200,6 @@ server {
         proxy_read_timeout 120s;
     }
 
-    location /grafana {
-        proxy_pass http://localhost:3001;
-    }
 }
 EOF
 
@@ -240,11 +231,11 @@ If you want to keep **one EC2 instance normally** and scale out only when user t
 - `CloudFront /api/* -> ALB`
 - `ALB -> Auto Scaling Group of backend-only EC2 instances`
 - `RDS PostgreSQL` shared by all backend instances
-- `Prometheus/Grafana` separate from autoscaled app nodes
+- optional observability added separately later, if needed
 
 ### Why this change is required
 
-- The current `docker-compose.prod.yml` layout runs backend, Postgres, Prometheus, and Grafana on one box.
+- The old `docker-compose.prod.yml` layout bundled too many services on one box.
 - Adding another backend container on the same instance does **not** solve memory pressure if memory is already high.
 - Multiple EC2 instances require a **shared database** and a **load balancer** or traffic will still hit only one server.
 
@@ -315,34 +306,11 @@ kubectl apply -f k8s/ollama/
 kubectl apply -f k8s/backend/
 kubectl apply -f k8s/frontend/
 
-# 6. Monitoring
-kubectl apply -f k8s/monitoring/
-
-# 7. Ingress (edit hostname in ingress.yaml first)
+# 6. Ingress (edit hostname in ingress.yaml first)
 kubectl apply -f k8s/ingress/
 ```
 
 > Note: The k8s manifests are for portfolio demonstration. The Docker Compose setup is the optimized primary deployment target.
-
----
-
-## Monitored metrics
-
-All metrics are exposed at `/metrics` in Prometheus format.
-
-| Metric | Type | Description |
-|---|---|---|
-| `medlit_requests_total` | Counter | Total requests by status |
-| `medlit_errors_total` | Counter | Errors by error type |
-| `medlit_tokens_in_total` | Counter | Total input tokens to LLM |
-| `medlit_tokens_out_total` | Counter | Total output tokens from LLM |
-| `medlit_topic_queries_total` | Counter | Queries by topic category |
-| `medlit_request_latency_seconds` | Histogram | End-to-end request latency |
-| `medlit_retrieval_latency_seconds` | Histogram | Retrieval pipeline latency |
-| `medlit_generation_latency_seconds` | Histogram | LLM generation latency |
-| `medlit_active_requests` | Gauge | In-flight requests |
-| `medlit_memory_records_total` | Gauge | Conversation memory size |
-| `medlit_documents_ingested_total` | Gauge | Ingested docs per source |
 
 ---
 
@@ -356,7 +324,6 @@ medical-lit-assistant/
 │   │   ├── config.py             # All settings (from env vars)
 │   │   ├── api/
 │   │   │   ├── health.py         # /health, /ready
-│   │   │   ├── metrics.py        # /metrics
 │   │   │   ├── query.py          # POST /api/v1/query
 │   │   │   ├── ingest.py         # topic ingestion + background seeding
 │   │   │   ├── uploads.py        # PDF upload ingestion
@@ -378,8 +345,7 @@ medical-lit-assistant/
 │   │       ├── vector_store.py   # pgvector search + RRF
 │   │       ├── memory_service.py # Conversation memory
 │   │       ├── pdf_ingestion.py  # session-scoped PDF extraction + storage
-│   │       ├── trust_scorer.py   # Trust score computation
-│   │       └── metrics_service.py # Prometheus metrics
+│   │       └── trust_scorer.py   # Trust score computation
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/
@@ -390,9 +356,6 @@ medical-lit-assistant/
 │   │   └── store/                # Zustand chat state
 │   ├── Dockerfile
 │   └── package.json
-├── monitoring/
-│   ├── prometheus/               # prometheus.yml + alert rules
-│   └── grafana/                  # Dashboards + auto-provisioning
 ├── k8s/                          # Kubernetes manifests (portfolio)
 ├── scripts/                      # setup.sh, health_check.sh
 ├── docker-compose.yml            # Primary deployment

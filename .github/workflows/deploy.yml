@@ -22,7 +22,6 @@
 #   SECRET_KEY                – app secret key for production
 #   NCBI_API_KEY              – PubMed API key
 #   NCBI_EMAIL                – PubMed email
-#   GF_ADMIN_PASSWORD         – Grafana admin password
 ##############################################################################
 
 name: Deploy
@@ -261,11 +260,10 @@ jobs:
             | .Origins.Quantity = (.Origins.Items | length)
             | .CacheBehaviors.Items = (
                 ((.CacheBehaviors.Items // [])
-                | map(select(.PathPattern != "/api/*" and .PathPattern != "/health" and .PathPattern != "/metrics")))
+                | map(select(.PathPattern != "/api/*" and .PathPattern != "/health")))
                 + [
                     write_behavior("/api/*"),
-                    read_behavior("/health"),
-                    read_behavior("/metrics")
+                    read_behavior("/health")
                   ]
               )
             | .CacheBehaviors.Quantity = (.CacheBehaviors.Items | length)

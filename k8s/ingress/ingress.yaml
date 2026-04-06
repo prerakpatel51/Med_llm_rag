@@ -34,20 +34,6 @@ spec:
                 name: backend
                 port:
                   number: 8000
-          - path: /metrics
-            pathType: Exact
-            backend:
-              service:
-                name: backend
-                port:
-                  number: 8000
-          - path: /grafana
-            pathType: Prefix
-            backend:
-              service:
-                name: grafana
-                port:
-                  number: 3000
   # Uncomment for TLS:
   # tls:
   #   - hosts:
