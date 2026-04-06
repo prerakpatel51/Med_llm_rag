@@ -55,12 +55,17 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend
-          pip install -r requirements.txt
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+          pip install pytest
 
       - name: Run tests
         run: |
           cd backend
-          python -m pytest tests/ -v --tb=short 2>/dev/null || echo "No tests found, skipping"
+          if [ -d tests ]; then
+            python -m pytest tests/ -v --tb=short
+          else
+            echo "No tests found, skipping"
+          fi
 
   # ── Job 2: Build & Push Backend Image to ECR ───────────────────────────────
   build-backend:
