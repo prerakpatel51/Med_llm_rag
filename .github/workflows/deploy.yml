@@ -181,8 +181,8 @@ jobs:
           fi
 
           if [[ -z "$ORIGIN_HOST" || "$ORIGIN_HOST" == "None" ]]; then
-            echo "Unable to resolve a public DNS name for EC2_HOST=$EC2_HOST"
-            exit 1
+            echo "Unable to resolve origin host from ALB or EC2_HOST=$EC2_HOST; skipping CloudFront routing update."
+            exit 0
           fi
 
           ETAG=$(aws cloudfront get-distribution-config \
@@ -317,13 +317,10 @@ jobs:
             mkdir -p ~/.ssh
             printf '%s\n' '${{ secrets.EC2_SSH_KEY }}' > ~/.ssh/medlit-ec2.pem
             chmod 600 ~/.ssh/medlit-ec2.pem
-            ssh -i ~/.ssh/medlit-ec2.pem -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@$EC2_HOST <<'EOF'
-              aws ecr get-login-password --region us-east-1 | \
-                docker login --username AWS --password-stdin \
-                401713183841.dkr.ecr.us-east-1.amazonaws.com
-              cd ~/app
-              docker-compose -f docker-compose.prod.yml pull backend
-              docker-compose -f docker-compose.prod.yml up -d --no-deps backend
-              docker image prune -f
-            EOF
+            ssh -i ~/.ssh/medlit-ec2.pem -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@$EC2_HOST \
+              "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 401713183841.dkr.ecr.us-east-1.amazonaws.com && \
+               cd ~/app && \
+               docker-compose -f docker-compose.prod.yml pull backend && \
+               docker-compose -f docker-compose.prod.yml up -d --no-deps backend && \
+               docker image prune -f"
           fi
