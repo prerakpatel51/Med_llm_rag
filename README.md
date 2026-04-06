@@ -257,6 +257,32 @@ If you want to keep **one EC2 instance normally** and scale out only when user t
 5. Update CloudFront `/api/*` to point to the ALB.
 6. Add a scaling policy, typically CPU first and memory second.
 
+## Live URLs
+
+Current production links:
+
+| URL | Purpose |
+|---|---|
+| https://d3jhehgg6t7to2.cloudfront.net | Main site |
+| https://d3jhehgg6t7to2.cloudfront.net/history/ | History page |
+| https://d3jhehgg6t7to2.cloudfront.net/health | Public health check through CloudFront |
+| https://d3jhehgg6t7to2.cloudfront.net/api/v1/ | API base through CloudFront |
+| http://med-llm-rag-backend-alb-202945636.us-east-1.elb.amazonaws.com/health | Direct ALB health check |
+
+CloudFront details:
+
+- Distribution ID: `E21OVYP1USAXXX`
+- CloudFront domain: `d3jhehgg6t7to2.cloudfront.net`
+- Custom domain: not configured
+
+If you need to look the site URL up later, run:
+
+```bash
+aws cloudfront list-distributions \
+  --query 'DistributionList.Items[].{Id:Id,Domain:DomainName,Aliases:Aliases.Items}' \
+  --output table
+```
+
 ### Recommended autoscaling settings
 
 - `min = 1`
